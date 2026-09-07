@@ -1,0 +1,23 @@
+## Visual Studio Temporary Files & User Settings
+.vs/
+*.user
+*.userosscache
+*.sln.docstates
+*.suo
+
+## Build Outputs (DO NOT UPLOAD THESE TO GIT)
+[Bb]in/
+[Oo]bj/
+*.tmp
+
+## Diagnostic Logs
+WinMigrate_ErrorLog.txt
+WinMigrate_ErrorLog.bak
+*.log
+
+## Backup Staging
+WinMigrate_V2V_Staging/
+
+## KEEP TOOLS FOLDER (qemu-img and DLLs will be committed so it works out of the box)
+!Tools/
+!Tools/**
