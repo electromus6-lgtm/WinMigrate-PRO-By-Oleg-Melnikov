@@ -131,9 +131,9 @@ namespace WpfApp1.Services
                 job.AppendLog($"Destination storage target: {targetVhdxPath}");
 
                 var disk = sourceVm.Disks.FirstOrDefault();
-                if (disk == null)
+                if (disk == null || string.IsNullOrWhiteSpace(disk.VmdkPath))
                 {
-                    throw new InvalidOperationException($"No attached virtual disks found on VMware workload '{sourceVm.Name}'.");
+                    throw new InvalidOperationException($"Workload '{sourceVm.Name}' does not have any attached virtual disks. Re-discover vCenter VMs and try again.");
                 }
 
                 var sourceVmdk = disk.VmdkPath;
@@ -274,25 +274,60 @@ namespace WpfApp1.Services
                     Directory.CreateDirectory(targetDir);
                 }
 
+                // 1. Locate actual source disk file (Handle both descriptor .vmdk and binary -flat.vmdk)
+                var actualSource = sourceVmdk;
+                var isRawFormat = false;
+
+                if (!File.Exists(actualSource))
+                {
+                    var dir = Path.GetDirectoryName(actualSource) ?? string.Empty;
+                    var baseName = Path.GetFileNameWithoutExtension(actualSource);
+                    var flatPath = Path.Combine(dir, $"{baseName}-flat.vmdk");
+
+                    if (File.Exists(flatPath))
+                    {
+                        actualSource = flatPath;
+                        isRawFormat = true; // -flat.vmdk is a raw binary disk extent
+                    }
+                    else
+                    {
+                        throw new FileNotFoundException($"Source disk file not found for conversion: {sourceVmdk}");
+                    }
+                }
+                else if (actualSource.EndsWith("-flat.vmdk", StringComparison.OrdinalIgnoreCase))
+                {
+                    isRawFormat = true;
+                }
+
+                // 2. Clean QEMU arguments (Compatible with all 2015-2026 builds; VHDX is dynamic by default)
+                var formatFlag = isRawFormat ? "-f raw" : "-f vmdk";
+                var qemuArgs = $"convert -p {formatFlag} -O vhdx \"{actualSource}\" \"{destVhdx}\"";
+
+                logger.Report($"[qemu-img EXEC] {qemuArgs}");
+
                 var psi = new ProcessStartInfo
                 {
                     FileName = qemuPath,
-                    Arguments = $"convert -p -f vmdk -O vhdx -o subformat=dynamic \"{sourceVmdk}\" \"{destVhdx}\"",
+                    Arguments = qemuArgs,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
 
+                var errorLog = new StringBuilder();
+
                 using var proc = new Process { StartInfo = psi };
                 proc.ErrorDataReceived += (s, e) =>
                 {
                     if (string.IsNullOrWhiteSpace(e.Data)) return;
 
+                    errorLog.AppendLine(e.Data);
+
                     var match = Regex.Match(e.Data, @"\(\s*([0-9\.]+)/100%\s*\)");
                     if (match.Success && double.TryParse(match.Groups[1].Value, out var pct))
                     {
-                        job.ProgressPercent = Math.Clamp(45.0 + (pct * 0.40), 45.0, 85.0); // 45% - 85% progress
+                        job.ProgressPercent = Math.Clamp(45.0 + (pct * 0.40), 45.0, 85.0);
                     }
                     logger.Report($"[qemu-img] {e.Data.Trim()}");
                 };
@@ -303,7 +338,8 @@ namespace WpfApp1.Services
 
                 if (proc.ExitCode != 0)
                 {
-                    throw new InvalidOperationException($"qemu-img conversion exited with code {proc.ExitCode}. Ensure valid source VMDK descriptor and flat files.");
+                    var details = errorLog.ToString().Trim();
+                    throw new InvalidOperationException($"qemu-img conversion failed (Exit Code {proc.ExitCode}):\n{details}");
                 }
 
                 logger.Report($"[qemu-img] VHDX disk image generated successfully: {destVhdx}");

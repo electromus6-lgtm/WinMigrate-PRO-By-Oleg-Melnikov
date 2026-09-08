@@ -71,7 +71,7 @@ namespace WpfApp1
 
             _telemetryTimer = new DispatcherTimer
             {
-                Interval = TimeSpan.FromSeconds(6)
+                Interval = TimeSpan.FromSeconds(10)
             };
             _telemetryTimer.Tick += TelemetryTimer_Tick;
 
@@ -147,6 +147,10 @@ namespace WpfApp1
         private async void TelemetryTimer_Tick(object? sender, EventArgs e)
         {
             if (_isPollingActive || _isMigrationRunning) return;
+
+            // Only poll telemetry when actively viewing Tab 1 (Migration Orchestrator)
+            if (NavOrchestrator.IsChecked != true) return;
+
             _isPollingActive = true;
 
             try
@@ -164,12 +168,18 @@ namespace WpfApp1
 
                     if (sSnap.RamTotalGB > 0)
                     {
-                        SourceTelemetryBar.Visibility = Visibility.Visible;
-                        PbSourceCpu.Value = sSnap.CpuUtilizationPercent;
-                        TxtSourceCpuGauge.Text = $"{sSnap.CpuUtilizationPercent:F0}%";
+                        var cpuVal = double.IsNaN(sSnap.CpuUtilizationPercent) || double.IsInfinity(sSnap.CpuUtilizationPercent)
+                            ? 0.0 : Math.Clamp(sSnap.CpuUtilizationPercent, 0.0, 100.0);
 
-                        PbSourceRam.Value = sSnap.RamUtilizationPercent;
-                        TxtSourceRamGauge.Text = $"{sSnap.RamUsedGB:F1} / {sSnap.RamTotalGB:F1} GB ({sSnap.RamUtilizationPercent:F0}%)";
+                        var ramVal = double.IsNaN(sSnap.RamUtilizationPercent) || double.IsInfinity(sSnap.RamUtilizationPercent)
+                            ? 0.0 : Math.Clamp(sSnap.RamUtilizationPercent, 0.0, 100.0);
+
+                        SourceTelemetryBar.Visibility = Visibility.Visible;
+                        PbSourceCpu.Value = cpuVal;
+                        TxtSourceCpuGauge.Text = $"{cpuVal:F0}%";
+
+                        PbSourceRam.Value = ramVal;
+                        TxtSourceRamGauge.Text = $"{sSnap.RamUsedGB:F1} / {sSnap.RamTotalGB:F1} GB ({ramVal:F0}%)";
                     }
                 }
 
@@ -186,15 +196,18 @@ namespace WpfApp1
 
                     if (tSnap.RamTotalGB > 0)
                     {
-                        PbTargetRam.Value = tSnap.RamUtilizationPercent;
-                        TxtTargetRamGaugePercent.Text = $"{tSnap.RamUtilizationPercent:F0}% USED ({tSnap.RamUsedGB:F1} GB / {tSnap.RamTotalGB:F1} GB)";
-                        TxtTargetRam.Text = (tSnap.RamTotalGB - tSnap.RamUsedGB).ToString("F1");
+                        var tRamVal = double.IsNaN(tSnap.RamUtilizationPercent) || double.IsInfinity(tSnap.RamUtilizationPercent)
+                            ? 0.0 : Math.Clamp(tSnap.RamUtilizationPercent, 0.0, 100.0);
+
+                        PbTargetRam.Value = tRamVal;
+                        TxtTargetRamGaugePercent.Text = $"{tRamVal:F0}% USED ({tSnap.RamUsedGB:F1} GB / {tSnap.RamTotalGB:F1} GB)";
+                        TxtTargetRam.Text = Math.Max(0, tSnap.RamTotalGB - tSnap.RamUsedGB).ToString("F1");
                     }
                 }
             }
             catch
             {
-                // Silently ignore telemetry blips
+                // Silently ignore temporary network blips
             }
             finally
             {
