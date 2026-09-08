@@ -1,0 +1,61 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net10.0-windows</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<UseWPF>true</UseWPF>
+		<LangVersion>latest</LangVersion>
+		<ApplicationManifest>app.manifest</ApplicationManifest>
+
+		<!-- EMBEDDED APPLICATION ICON -->
+		<ApplicationIcon>database-management.ico</ApplicationIcon>
+
+		<!-- STANDALONE ZERO-DEPENDENCY RELEASE PROFILE -->
+		<RuntimeIdentifier>win-x64</RuntimeIdentifier>
+		<PublishSingleFile>true</PublishSingleFile>
+		<SelfContained>true</SelfContained>
+		<IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+		<PublishReadyToRun>true</PublishReadyToRun>
+		<EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+
+		<!-- PREVENT TRIMMER FROM STRIPPING POWERSHELL RUNSPACE TYPES -->
+		<PublishTrimmed>false</PublishTrimmed>
+
+		<!-- EMBEDDED SYMBOLS FOR ACCURATE STACK TRACES IN CRASH LOGS -->
+		<DebugType>embedded</DebugType>
+		<Deterministic>true</Deterministic>
+
+		<!-- METADATA & AUTHOR CREDITS -->
+		<AssemblyName>WinMigratePro</AssemblyName>
+		<Title>WinMigrate Pro (ElectroMU Edition)</Title>
+		<Authors>Oleg Melnikov</Authors>
+		<Company>ElectroMU Gaming Network</Company>
+		<Product>WinMigrate Pro (ElectroMU Edition)</Product>
+		<Description>Centralized agentless live migration orchestrator and datacenter management console for Hyper-V.</Description>
+		<Copyright>Copyright © 2026 Oleg Melnikov. ElectroMU Gaming Network. All rights reserved.</Copyright>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<Version>1.1.0</Version>
+		<AssemblyVersion>1.1.0.0</AssemblyVersion>
+		<FileVersion>1.1.0.0</FileVersion>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="System.Management.Automation" Version="7.4.5" />
+	</ItemGroup>
+
+	<!-- Automatically deploy tools directory (qemu-img.exe) to build output -->
+	<ItemGroup>
+		<None Update="tools\**" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+	
+	<!-- Include icon as a content resource -->
+	<ItemGroup>
+		<Resource Include="database-management.ico" />
+	</ItemGroup>
+	<ItemGroup>
+	  <Folder Include="Tools\" />
+	</ItemGroup>
+
+</Project>
