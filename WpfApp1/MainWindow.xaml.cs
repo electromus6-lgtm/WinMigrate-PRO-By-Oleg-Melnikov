@@ -1876,6 +1876,7 @@ finally {{
         // =================================================================
         // PHASE 2: vCENTER V2V IMPORTER ACTIONS
         // =================================================================
+
         private async void BtnConnectVCenter_Click(object sender, RoutedEventArgs e)
         {
             var host = TxtVCenterHost.Text.Trim();
@@ -1919,20 +1920,6 @@ finally {{
                     VCenterEmptyState.Visibility = Visibility.Collapsed;
                     VCenterVmListBox.Visibility = Visibility.Visible;
                 }
-
-                // Also discover target switches on the target Hyper-V card
-                var targetHyperV = TxtV2VTargetHost.Text.Trim();
-                if (!string.IsNullOrWhiteSpace(targetHyperV))
-                {
-                    _sessionPasswordCache.TryGetValue(targetHyperV, out var hPass);
-                    try
-                    {
-                        var switches = await _hyperVService.DiscoverVirtualSwitchesAsync(targetHyperV, null, hPass);
-                        CmbV2VSwitches.ItemsSource = switches;
-                        if (switches.Count > 0) CmbV2VSwitches.SelectedIndex = 0;
-                    }
-                    catch { }
-                }
             }
             catch (Exception ex)
             {
@@ -1945,6 +1932,67 @@ finally {{
             {
                 BtnConnectVCenter.IsEnabled = true;
                 BtnConnectVCenter.Content = "Connect & Discover vCenter VMs";
+            }
+        }
+
+        private async void BtnConnectV2VTarget_Click(object sender, RoutedEventArgs e)
+        {
+            var host = TxtV2VTargetHost.Text.Trim();
+            var user = TxtV2VTargetUser.Text.Trim();
+            var pass = TxtV2VTargetPass.Password;
+
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                MessageBox.Show("Please enter a valid Target Hyper-V Host IP or FQDN.", "Validation Notice", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(pass))
+            {
+                _sessionPasswordCache[host] = pass;
+            }
+
+            BtnConnectV2VTarget.IsEnabled = false;
+            BtnConnectV2VTarget.Content = "Scanning Hyper-V Node...";
+
+            try
+            {
+                var switches = await _hyperVService.DiscoverVirtualSwitchesAsync(
+                    host,
+                    string.IsNullOrEmpty(user) ? null : user,
+                    string.IsNullOrEmpty(pass) ? null : pass);
+
+                CmbV2VSwitches.ItemsSource = switches;
+                if (switches.Count > 0)
+                {
+                    CmbV2VSwitches.SelectedIndex = 0;
+                }
+
+                try
+                {
+                    var volumes = await _hyperVService.DiscoverTargetStorageVolumesAsync(
+                        host,
+                        string.IsNullOrEmpty(user) ? null : user,
+                        string.IsNullOrEmpty(pass) ? null : pass);
+
+                    if (volumes.Count > 0)
+                    {
+                        var defaultVol = volumes.FirstOrDefault(v => v.IsCsv) ?? volumes[0];
+                        TxtV2VStoragePath.Text = defaultVol.Path;
+                    }
+                }
+                catch { }
+
+                MessageBox.Show($"Connected to Hyper-V host '{host}'! Discovered {switches.Count} virtual switch(es).", "Hyper-V Target Verified", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to connect to Hyper-V host '{host}':\n\n{ex.Message}", "Connection Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                BtnConnectV2VTarget.IsEnabled = true;
+                BtnConnectV2VTarget.Content = "Connect & Discover Hyper-V Switches";
             }
         }
 

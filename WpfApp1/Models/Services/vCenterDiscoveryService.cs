@@ -269,7 +269,6 @@ namespace WpfApp1.Services
                         var dVal = dObj.Value;
                         var label = dVal.TryGetProperty("label", out var lProp) ? lProp.GetString() ?? "Hard Disk" : "Hard Disk";
                         var cap = dVal.TryGetProperty("capacity", out var cProp) ? cProp.GetInt64() : 42949672960L;
-
                         var vmdkPath = string.Empty;
                         var dsName = string.Empty;
 
@@ -281,10 +280,7 @@ namespace WpfApp1.Services
                         if (vmdkPath.StartsWith("["))
                         {
                             var closeBracket = vmdkPath.IndexOf(']');
-                            if (closeBracket > 1)
-                            {
-                                dsName = vmdkPath.Substring(1, closeBracket - 1);
-                            }
+                            if (closeBracket > 1) dsName = vmdkPath.Substring(1, closeBracket - 1);
                         }
 
                         vm.Disks.Add(new VCenterDiskInfo
@@ -297,9 +293,39 @@ namespace WpfApp1.Services
                         });
                     }
                 }
+                else if (disksProp.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var dVal in disksProp.EnumerateArray())
+                    {
+                        var label = dVal.TryGetProperty("label", out var lProp) ? lProp.GetString() ?? "Hard Disk" : "Hard Disk";
+                        var cap = dVal.TryGetProperty("capacity", out var cProp) ? cProp.GetInt64() : 42949672960L;
+                        var key = dVal.TryGetProperty("key", out var kProp) ? kProp.GetString() ?? "disk" : "disk";
+                        var vmdkPath = string.Empty;
+                        var dsName = string.Empty;
+
+                        if (dVal.TryGetProperty("backing", out var bProp))
+                        {
+                            vmdkPath = bProp.TryGetProperty("vmdk_file", out var vProp) ? vProp.GetString() ?? string.Empty : string.Empty;
+                        }
+
+                        if (vmdkPath.StartsWith("["))
+                        {
+                            var closeBracket = vmdkPath.IndexOf(']');
+                            if (closeBracket > 1) dsName = vmdkPath.Substring(1, closeBracket - 1);
+                        }
+
+                        vm.Disks.Add(new VCenterDiskInfo
+                        {
+                            DiskKey = key,
+                            Label = label,
+                            CapacityBytes = cap,
+                            VmdkPath = vmdkPath,
+                            DatastoreName = dsName
+                        });
+                    }
+                }
             }
         }
-
         /// <summary>
         /// Native Datastore HTTP Streamer: Downloads binary VMDK and flat extents directly across the network
         /// from the ESXi datastore over HTTPS with high-speed 8 MB buffered streaming and live throughput reporting.
