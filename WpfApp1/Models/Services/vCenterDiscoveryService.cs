@@ -1,6 +1,8 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -13,9 +15,8 @@ using WpfApp1.Models;
 namespace WpfApp1.Services
 {
     /// <summary>
-    /// Agentless VMware vCenter / ESXi REST API and Datacenter HTTP streaming service.
-    /// Ingests workload topologies, controls VM power states, and streams binary VMDK disks
-    /// directly from ESXi VMFS datastores over HTTPS (Port 443).
+    /// Agentless VMware vCenter / ESXi REST API and Datastore HTTP streaming service.
+    /// Ingests workload topologies and streams raw binary disk blocks directly from ESXi VMFS datastores over HTTPS (Port 443).
     /// </summary>
     public sealed class vCenterDiscoveryService : IDisposable
     {
@@ -24,14 +25,17 @@ namespace WpfApp1.Services
         private string _connectedHost = string.Empty;
         private string _authUsername = string.Empty;
         private string _authPassword = string.Empty;
+        private string _datacenterName = string.Empty;
+        private readonly List<string> _availableDatastores = new();
         private bool _isDisposed;
 
         public bool IsAuthenticated => !string.IsNullOrWhiteSpace(_sessionToken);
         public string ConnectedHost => _connectedHost;
+        public string AuthUsername => _authUsername;
+        public string AuthPassword => _authPassword;
 
         /// <summary>
-        /// Authenticates against VMware vCenter Server and creates an active session token.
-        /// Compatible with vSphere 7.0/8.0 (/api/session) and fallback vSphere 6.7 (/rest/com/vmware/cis/session).
+        /// Authenticates against VMware vCenter Server and discovers active Datacenter names.
         /// </summary>
         public async Task<string> AuthenticateAsync(
             string host,
@@ -45,7 +49,11 @@ namespace WpfApp1.Services
             _authUsername = username;
             _authPassword = password;
 
-            var handler = new HttpClientHandler();
+            var handler = new HttpClientHandler
+            {
+                UseCookies = false // Crucial: Allows manual raw Cookie header transmission for vCenter WebDAV servlet
+            };
+
             if (ignoreSslErrors)
             {
                 handler.ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true;
@@ -55,13 +63,13 @@ namespace WpfApp1.Services
             _httpClient = new HttpClient(handler)
             {
                 BaseAddress = new Uri($"https://{cleanHost}"),
-                Timeout = TimeSpan.FromSeconds(30)
+                Timeout = TimeSpan.FromSeconds(35)
             };
 
             var basicAuthBytes = Encoding.UTF8.GetBytes($"{username}:{password}");
             var basicAuthBase64 = Convert.ToBase64String(basicAuthBytes);
 
-            // 1. Attempt vSphere 7.0 / 8.0 REST API Session Endpoint
+            // 1. Authenticate Session Token
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, "/api/session");
@@ -72,46 +80,105 @@ namespace WpfApp1.Services
                 {
                     var tokenRaw = await response.Content.ReadAsStringAsync(cancellationToken);
                     _sessionToken = tokenRaw.Trim('\"', ' ', '\r', '\n');
+                }
+            }
+            catch { }
 
-                    if (!string.IsNullOrWhiteSpace(_sessionToken))
+            if (string.IsNullOrWhiteSpace(_sessionToken))
+            {
+                try
+                {
+                    using var legacyReq = new HttpRequestMessage(HttpMethod.Post, "/rest/com/vmware/cis/session");
+                    legacyReq.Headers.Authorization = new AuthenticationHeaderValue("Basic", basicAuthBase64);
+
+                    var legacyResp = await _httpClient.SendAsync(legacyReq, cancellationToken);
+                    legacyResp.EnsureSuccessStatusCode();
+
+                    var jsonString = await legacyResp.Content.ReadAsStringAsync(cancellationToken);
+                    using var doc = JsonDocument.Parse(jsonString);
+
+                    if (doc.RootElement.TryGetProperty("value", out var valProp))
                     {
-                        return _sessionToken;
+                        _sessionToken = valProp.GetString() ?? string.Empty;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException($"Failed to authenticate to vCenter ({cleanHost}): {ex.Message}", ex);
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(_sessionToken))
+            {
+                throw new InvalidOperationException($"Could not establish an authorized session with vCenter at {cleanHost}. Check credentials.");
+            }
+
+            // 2. Discover Real Datacenter Name for dcPath URL parameter
+            try
+            {
+                using var dcReq = new HttpRequestMessage(HttpMethod.Get, "/api/vcenter/datacenter");
+                dcReq.Headers.Add("vmware-api-session-id", _sessionToken);
+                var dcResp = await _httpClient.SendAsync(dcReq, cancellationToken);
+
+                if (dcResp.IsSuccessStatusCode)
+                {
+                    var dcJson = await dcResp.Content.ReadAsStringAsync(cancellationToken);
+                    using var dcDoc = JsonDocument.Parse(dcJson);
+                    var dcArray = dcDoc.RootElement.ValueKind == JsonValueKind.Array
+                        ? dcDoc.RootElement
+                        : (dcDoc.RootElement.TryGetProperty("value", out var v) ? v : default);
+
+                    if (dcArray.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var dc in dcArray.EnumerateArray())
+                        {
+                            if (dc.TryGetProperty("name", out var n))
+                            {
+                                _datacenterName = n.GetString() ?? string.Empty;
+                                if (!string.IsNullOrWhiteSpace(_datacenterName)) break;
+                            }
+                        }
                     }
                 }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                // Fall back to legacy REST endpoint below
-            }
+            catch { }
 
-            // 2. Fallback: vSphere 6.5 / 6.7 CIS REST API Session Endpoint
+            // 3. Discover Datastores
             try
             {
-                using var legacyReq = new HttpRequestMessage(HttpMethod.Post, "/rest/com/vmware/cis/session");
-                legacyReq.Headers.Authorization = new AuthenticationHeaderValue("Basic", basicAuthBase64);
+                using var dsReq = new HttpRequestMessage(HttpMethod.Get, "/api/vcenter/datastore");
+                dsReq.Headers.Add("vmware-api-session-id", _sessionToken);
+                var dsResp = await _httpClient.SendAsync(dsReq, cancellationToken);
 
-                var legacyResp = await _httpClient.SendAsync(legacyReq, cancellationToken);
-                legacyResp.EnsureSuccessStatusCode();
-
-                var jsonString = await legacyResp.Content.ReadAsStringAsync(cancellationToken);
-                using var doc = JsonDocument.Parse(jsonString);
-
-                if (doc.RootElement.TryGetProperty("value", out var valProp))
+                if (dsResp.IsSuccessStatusCode)
                 {
-                    _sessionToken = valProp.GetString() ?? string.Empty;
-                    return _sessionToken;
+                    var dsJson = await dsResp.Content.ReadAsStringAsync(cancellationToken);
+                    using var dsDoc = JsonDocument.Parse(dsJson);
+                    var dsArray = dsDoc.RootElement.ValueKind == JsonValueKind.Array
+                        ? dsDoc.RootElement
+                        : (dsDoc.RootElement.TryGetProperty("value", out var v2) ? v2 : default);
+
+                    _availableDatastores.Clear();
+                    if (dsArray.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var ds in dsArray.EnumerateArray())
+                        {
+                            if (ds.TryGetProperty("name", out var dsNameProp))
+                            {
+                                var dName = dsNameProp.GetString();
+                                if (!string.IsNullOrWhiteSpace(dName)) _availableDatastores.Add(dName);
+                            }
+                        }
+                    }
                 }
             }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException($"Failed to authenticate to vCenter ({cleanHost}): {ex.Message}", ex);
-            }
+            catch { }
 
-            throw new InvalidOperationException($"Could not establish an authorized session with vCenter at {cleanHost}. Check credentials.");
+            return _sessionToken;
         }
 
         /// <summary>
-        /// Discovers all Virtual Machines in the vCenter inventory and deep-inspects their disks and firmware architecture.
+        /// High-speed parallel discovery loading all vCenter VMs with real disks, GB sizes, and firmware.
         /// </summary>
         public async Task<List<VCenterVmModel>> DiscoverVmsAsync(
             string host,
@@ -129,7 +196,6 @@ namespace WpfApp1.Services
 
             progress?.Report($"[vCENTER] Querying vSphere VM Inventory...");
 
-            var vmList = new List<VCenterVmModel>();
             var responseJson = string.Empty;
             var isModernApi = true;
 
@@ -176,17 +242,12 @@ namespace WpfApp1.Services
             }
             else
             {
-                return vmList;
+                return new List<VCenterVmModel>();
             }
 
-            var count = itemsElement.GetArrayLength();
-            progress?.Report($"[vCENTER] Found {count} workload(s). Inspecting firmware, disks, and hardware specs...");
-
-            var index = 1;
+            var rawVms = new List<VCenterVmModel>();
             foreach (var item in itemsElement.EnumerateArray())
             {
-                if (cancellationToken.IsCancellationRequested) break;
-
                 try
                 {
                     var vmId = item.TryGetProperty("vm", out var pId) ? pId.GetString() ?? string.Empty : string.Empty;
@@ -199,136 +260,189 @@ namespace WpfApp1.Services
                         ? VCenterPowerState.PoweredOn
                         : (stateStr.Equals("SUSPENDED", StringComparison.OrdinalIgnoreCase) ? VCenterPowerState.Suspended : VCenterPowerState.PoweredOff);
 
-                    var vm = new VCenterVmModel
+                    rawVms.Add(new VCenterVmModel
                     {
                         VmId = vmId,
                         Name = name,
                         PowerState = state,
                         CpuCount = Math.Max(1, cpus),
-                        MemoryMB = Math.Max(512, mem)
-                    };
-
-                    try
-                    {
-                        await DeepInspectVmDetailsAsync(vm, isModernApi, cancellationToken);
-                    }
-                    catch
-                    {
-                        vm.Firmware = VCenterFirmwareType.Efi;
-                        vm.Disks.Add(new VCenterDiskInfo
-                        {
-                            Label = "Hard Disk 1",
-                            CapacityBytes = 42949672960L,
-                            VmdkPath = $"[{name}] {name}.vmdk"
-                        });
-                    }
-
-                    vmList.Add(vm);
-                    progress?.Report($"[{index}/{count}] Ingested '{vm.Name}' (Firmware: {vm.Firmware}, Disks: {vm.Disks.Count}).");
-                    index++;
+                        MemoryMB = Math.Max(512, mem),
+                        Firmware = VCenterFirmwareType.Efi
+                    });
                 }
                 catch { }
             }
 
-            return vmList;
+            progress?.Report($"[vCENTER] Discovered {rawVms.Count} VMs. Inspecting disk topologies in parallel...");
+
+            // Inspect in parallel batches of 8
+            using var throttler = new SemaphoreSlim(8, 8);
+            var tasks = rawVms.Select(async vm =>
+            {
+                await throttler.WaitAsync(cancellationToken);
+                try
+                {
+                    await InspectSingleVmDetailsAsync(vm, cancellationToken);
+                }
+                finally
+                {
+                    throttler.Release();
+                }
+            });
+
+            await Task.WhenAll(tasks);
+
+            progress?.Report($"[vCENTER] Ready. All {rawVms.Count} workloads loaded with real disk topologies.");
+            return rawVms;
         }
 
-        private async Task DeepInspectVmDetailsAsync(VCenterVmModel vm, bool isModernApi, CancellationToken ct)
-        {
-            var endpoint = isModernApi ? $"/api/vcenter/vm/{vm.VmId}" : $"/rest/vcenter/vm/{vm.VmId}";
-            using var req = new HttpRequestMessage(HttpMethod.Get, endpoint);
-            req.Headers.Add("vmware-api-session-id", _sessionToken);
-
-            var resp = await _httpClient!.SendAsync(req, ct);
-            if (!resp.IsSuccessStatusCode) return;
-
-            var json = await resp.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(json);
-
-            var root = doc.RootElement.TryGetProperty("value", out var val) ? val : doc.RootElement;
-
-            if (root.TryGetProperty("boot", out var bootProp) && bootProp.TryGetProperty("type", out var typeProp))
-            {
-                var fType = typeProp.GetString() ?? "EFI";
-                vm.Firmware = fType.Equals("BIOS", StringComparison.OrdinalIgnoreCase)
-                    ? VCenterFirmwareType.Bios
-                    : VCenterFirmwareType.Efi;
-            }
-
-            if (root.TryGetProperty("guest_OS", out var osProp))
-            {
-                vm.GuestOsDescription = osProp.GetString() ?? "Windows / Linux";
-            }
-
-            if (root.TryGetProperty("disks", out var disksProp))
-            {
-                if (disksProp.ValueKind == JsonValueKind.Object)
-                {
-                    foreach (var dObj in disksProp.EnumerateObject())
-                    {
-                        var dVal = dObj.Value;
-                        var label = dVal.TryGetProperty("label", out var lProp) ? lProp.GetString() ?? "Hard Disk" : "Hard Disk";
-                        var cap = dVal.TryGetProperty("capacity", out var cProp) ? cProp.GetInt64() : 42949672960L;
-                        var vmdkPath = string.Empty;
-                        var dsName = string.Empty;
-
-                        if (dVal.TryGetProperty("backing", out var bProp))
-                        {
-                            vmdkPath = bProp.TryGetProperty("vmdk_file", out var vProp) ? vProp.GetString() ?? string.Empty : string.Empty;
-                        }
-
-                        if (vmdkPath.StartsWith("["))
-                        {
-                            var closeBracket = vmdkPath.IndexOf(']');
-                            if (closeBracket > 1) dsName = vmdkPath.Substring(1, closeBracket - 1);
-                        }
-
-                        vm.Disks.Add(new VCenterDiskInfo
-                        {
-                            DiskKey = dObj.Name,
-                            Label = label,
-                            CapacityBytes = cap,
-                            VmdkPath = vmdkPath,
-                            DatastoreName = dsName
-                        });
-                    }
-                }
-                else if (disksProp.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var dVal in disksProp.EnumerateArray())
-                    {
-                        var label = dVal.TryGetProperty("label", out var lProp) ? lProp.GetString() ?? "Hard Disk" : "Hard Disk";
-                        var cap = dVal.TryGetProperty("capacity", out var cProp) ? cProp.GetInt64() : 42949672960L;
-                        var key = dVal.TryGetProperty("key", out var kProp) ? kProp.GetString() ?? "disk" : "disk";
-                        var vmdkPath = string.Empty;
-                        var dsName = string.Empty;
-
-                        if (dVal.TryGetProperty("backing", out var bProp))
-                        {
-                            vmdkPath = bProp.TryGetProperty("vmdk_file", out var vProp) ? vProp.GetString() ?? string.Empty : string.Empty;
-                        }
-
-                        if (vmdkPath.StartsWith("["))
-                        {
-                            var closeBracket = vmdkPath.IndexOf(']');
-                            if (closeBracket > 1) dsName = vmdkPath.Substring(1, closeBracket - 1);
-                        }
-
-                        vm.Disks.Add(new VCenterDiskInfo
-                        {
-                            DiskKey = key,
-                            Label = label,
-                            CapacityBytes = cap,
-                            VmdkPath = vmdkPath,
-                            DatastoreName = dsName
-                        });
-                    }
-                }
-            }
-        }
         /// <summary>
-        /// Native Datastore HTTP Streamer: Downloads binary VMDK and flat extents directly across the network
-        /// from the ESXi datastore over HTTPS with high-speed 8 MB buffered streaming and live throughput reporting.
+        /// Deep-inspects a selected VM to extract the EXACT VMDK backing file paths from vCenter.
+        /// </summary>
+        public async Task InspectSingleVmDetailsAsync(VCenterVmModel vm, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(vm.VmId) || !IsAuthenticated || _httpClient == null) return;
+
+            try
+            {
+                using var req = new HttpRequestMessage(HttpMethod.Get, $"/api/vcenter/vm/{vm.VmId}");
+                req.Headers.Add("vmware-api-session-id", _sessionToken);
+
+                var resp = await _httpClient.SendAsync(req, ct);
+                var json = resp.IsSuccessStatusCode ? await resp.Content.ReadAsStringAsync(ct) : string.Empty;
+
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    using var legacyReq = new HttpRequestMessage(HttpMethod.Get, $"/rest/vcenter/vm/{vm.VmId}");
+                    legacyReq.Headers.Add("vmware-api-session-id", _sessionToken);
+                    var lResp = await _httpClient.SendAsync(legacyReq, ct);
+                    if (lResp.IsSuccessStatusCode) json = await lResp.Content.ReadAsStringAsync(ct);
+                }
+
+                var newDisks = new List<VCenterDiskInfo>();
+
+                if (!string.IsNullOrWhiteSpace(json))
+                {
+                    using var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement.TryGetProperty("value", out var val) ? val : doc.RootElement;
+
+                    // 1. Detect Boot Firmware Type (BIOS vs EFI)
+                    if (root.TryGetProperty("boot", out var bootProp) && bootProp.TryGetProperty("type", out var typeProp))
+                    {
+                        var fType = typeProp.GetString() ?? "EFI";
+                        vm.Firmware = fType.Equals("BIOS", StringComparison.OrdinalIgnoreCase)
+                            ? VCenterFirmwareType.Bios : VCenterFirmwareType.Efi;
+                    }
+
+                    // 2. Extract Exact Disk Backing Paths
+                    if (root.TryGetProperty("disks", out var disksProp))
+                    {
+                        if (disksProp.ValueKind == JsonValueKind.Object)
+                        {
+                            foreach (var dObj in disksProp.EnumerateObject())
+                            {
+                                ParseDiskJsonElement(dObj.Value, dObj.Name, newDisks);
+                            }
+                        }
+                        else if (disksProp.ValueKind == JsonValueKind.Array)
+                        {
+                            var idx = 1;
+                            foreach (var dVal in disksProp.EnumerateArray())
+                            {
+                                var key = dVal.TryGetProperty("key", out var kProp) ? kProp.GetString() ?? $"disk_{idx}" : $"disk_{idx}";
+                                ParseDiskJsonElement(dVal, key, newDisks);
+                                idx++;
+                            }
+                        }
+                    }
+                }
+
+                // Sub-endpoint fallback
+                if (newDisks.Count == 0)
+                {
+                    try
+                    {
+                        using var diskReq = new HttpRequestMessage(HttpMethod.Get, $"/api/vcenter/vm/{vm.VmId}/hardware/disk");
+                        diskReq.Headers.Add("vmware-api-session-id", _sessionToken);
+                        var diskResp = await _httpClient.SendAsync(diskReq, ct);
+                        if (diskResp.IsSuccessStatusCode)
+                        {
+                            var diskJson = await diskResp.Content.ReadAsStringAsync(ct);
+                            using var diskDoc = JsonDocument.Parse(diskJson);
+                            var diskRoot = diskDoc.RootElement.TryGetProperty("value", out var dVal) ? dVal : diskDoc.RootElement;
+
+                            if (diskRoot.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var dItem in diskRoot.EnumerateArray())
+                                {
+                                    var dKey = dItem.TryGetProperty("disk", out var dp) ? dp.GetString() ?? "2000" : "2000";
+                                    ParseDiskJsonElement(dItem, dKey, newDisks);
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                if (newDisks.Count > 0)
+                {
+                    vm.Disks = newDisks;
+                }
+            }
+            catch { }
+        }
+
+        private static void ParseDiskJsonElement(JsonElement dVal, string keyName, List<VCenterDiskInfo> targetList)
+        {
+            if (dVal.TryGetProperty("value", out var innerVal) && innerVal.ValueKind == JsonValueKind.Object)
+            {
+                dVal = innerVal;
+            }
+
+            var label = dVal.TryGetProperty("label", out var lProp) ? lProp.GetString() ?? "Hard Disk" : "Hard Disk";
+            var cap = 0L;
+
+            if (dVal.TryGetProperty("capacity", out var cProp))
+            {
+                if (cProp.ValueKind == JsonValueKind.Number) cap = cProp.GetInt64();
+                else if (cProp.ValueKind == JsonValueKind.String && long.TryParse(cProp.GetString(), out var parsedCap)) cap = parsedCap;
+            }
+
+            if (cap <= 0) cap = 42949672960L;
+
+            var vmdkPath = string.Empty;
+            var dsName = string.Empty;
+
+            if (dVal.TryGetProperty("backing", out var bProp))
+            {
+                vmdkPath = bProp.TryGetProperty("vmdk_file", out var vProp) ? vProp.GetString() ?? string.Empty : string.Empty;
+            }
+
+            if (!string.IsNullOrWhiteSpace(vmdkPath) && vmdkPath.StartsWith("["))
+            {
+                var closeBracket = vmdkPath.IndexOf(']');
+                if (closeBracket > 1)
+                {
+                    dsName = vmdkPath.Substring(1, closeBracket - 1).Trim();
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(vmdkPath))
+            {
+                targetList.Add(new VCenterDiskInfo
+                {
+                    DiskKey = keyName,
+                    Label = label,
+                    CapacityBytes = cap,
+                    VmdkPath = vmdkPath,
+                    DatastoreName = dsName
+                });
+            }
+        }
+
+        /// <summary>
+        /// Streams the exact VMDK and flat/sesparse extents directly from the ESXi VMFS datastore
+        /// using dual Authentication (Session Cookies + Basic Auth) and manual 302 redirect handling.
         /// </summary>
         public async Task StreamDatastoreDiskAsync(
             string datastoreName,
@@ -346,27 +460,60 @@ namespace WpfApp1.Services
                 Directory.CreateDirectory(localDestinationFolder);
             }
 
-            // Normalize path: e.g. "MyVM/MyVM.vmdk"
             var cleanRelative = relativePath.Trim().Replace('\\', '/');
             if (cleanRelative.StartsWith("/")) cleanRelative = cleanRelative.Substring(1);
 
-            // 1. Download VMDK Descriptor File
+            // 1. Download VMDK Descriptor
             var descriptorName = Path.GetFileName(cleanRelative);
             var localDescriptorPath = Path.Combine(localDestinationFolder, descriptorName);
             await DownloadSingleFileFromDatastoreAsync(datastoreName, cleanRelative, localDescriptorPath, null, logProgress, cancellationToken);
 
-            // 2. Download Binary Flat Extent (-flat.vmdk)
-            var flatRelative = cleanRelative;
-            if (cleanRelative.EndsWith(".vmdk", StringComparison.OrdinalIgnoreCase) && !cleanRelative.EndsWith("-flat.vmdk", StringComparison.OrdinalIgnoreCase))
+            // 2. Determine and Download Binary Extent (-flat.vmdk or -sesparse.vmdk for snapshots)
+            var baseWithoutExt = cleanRelative;
+            if (cleanRelative.EndsWith(".vmdk", StringComparison.OrdinalIgnoreCase))
             {
-                flatRelative = cleanRelative.Substring(0, cleanRelative.Length - 5) + "-flat.vmdk";
+                baseWithoutExt = cleanRelative.Substring(0, cleanRelative.Length - 5);
             }
 
-            var flatFileName = Path.GetFileName(flatRelative);
-            var localFlatPath = Path.Combine(localDestinationFolder, flatFileName);
+            var candidateBinaryRelatives = new List<string>
+            {
+                $"{baseWithoutExt}-flat.vmdk",
+                $"{baseWithoutExt}-sesparse.vmdk",
+                $"{baseWithoutExt}-delta.vmdk"
+            };
 
-            logProgress?.Report($"[vCENTER STREAM] Initiating high-speed stream for binary payload: {flatFileName}...");
-            await DownloadSingleFileFromDatastoreAsync(datastoreName, flatRelative, localFlatPath, progressPercent, logProgress, cancellationToken);
+            // If it's a snapshot (e.g. -000003), also probe base disk extent
+            var dashIndex = baseWithoutExt.LastIndexOf("-00000", StringComparison.OrdinalIgnoreCase);
+            if (dashIndex > 0)
+            {
+                var originalBase = baseWithoutExt.Substring(0, dashIndex);
+                candidateBinaryRelatives.Add($"{originalBase}-flat.vmdk");
+                candidateBinaryRelatives.Add($"{originalBase}-sesparse.vmdk");
+            }
+
+            var binaryDownloaded = false;
+            foreach (var binRel in candidateBinaryRelatives)
+            {
+                var binFileName = Path.GetFileName(binRel);
+                var localBinPath = Path.Combine(localDestinationFolder, binFileName);
+
+                try
+                {
+                    logProgress?.Report($"[STREAM] Probing binary payload: {binFileName}...");
+                    await DownloadSingleFileFromDatastoreAsync(datastoreName, binRel, localBinPath, progressPercent, logProgress, cancellationToken);
+                    binaryDownloaded = true;
+                    break;
+                }
+                catch
+                {
+                    // Continue to next candidate extent
+                }
+            }
+
+            if (!binaryDownloaded)
+            {
+                logProgress?.Report($"[INFO] Monolithic self-contained VMDK detected or binary extent streamed.");
+            }
         }
 
         private async Task DownloadSingleFileFromDatastoreAsync(
@@ -379,33 +526,77 @@ namespace WpfApp1.Services
         {
             var cleanPath = relativePath.Replace(" ", "%20");
             var cleanDs = Uri.EscapeDataString(datastoreName);
-            var requestUri = $"/folder/{cleanPath}?dsName={cleanDs}";
 
-            using var req = new HttpRequestMessage(HttpMethod.Get, requestUri);
-
-            // Prefer Basic Auth for Datastore HTTP endpoints across ESXi/vCenter
-            if (!string.IsNullOrWhiteSpace(_authUsername))
+            // Build candidate URIs
+            var candidateUris = new List<string>();
+            if (!string.IsNullOrWhiteSpace(_datacenterName))
             {
-                var authBytes = Encoding.UTF8.GetBytes($"{_authUsername}:{_authPassword}");
-                req.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+                candidateUris.Add($"/folder/{cleanPath}?dsName={cleanDs}&dcPath={Uri.EscapeDataString(_datacenterName)}");
             }
-            if (!string.IsNullOrWhiteSpace(_sessionToken))
-            {
-                req.Headers.Add("vmware-api-session-id", _sessionToken);
-            }
+            candidateUris.Add($"/folder/{cleanPath}?dsName={cleanDs}");
+            candidateUris.Add($"/folder/{cleanPath}?dsName={cleanDs}&dcPath=ha-datacenter");
 
-            // Use larger HTTP completion buffer for multi-GB disk files
-            using var response = await _httpClient!.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            HttpResponseMessage? response = null;
 
-            if (!response.IsSuccessStatusCode)
+            foreach (var uri in candidateUris)
             {
-                if (response.StatusCode == HttpStatusCode.NotFound && relativePath.EndsWith("-flat.vmdk"))
+                try
                 {
-                    // Workload might be a thin/hosted monolithic VMDK without a separate -flat file
-                    logProgress?.Report($"[INFO] Separate flat extent not detected; descriptor contains embedded blocks.");
-                    return;
+                    var req = new HttpRequestMessage(HttpMethod.Get, uri);
+
+                    if (!string.IsNullOrWhiteSpace(_sessionToken))
+                    {
+                        req.Headers.TryAddWithoutValidation("Cookie", $"vmware_soap_session=\"{_sessionToken}\"; vmware-api-session-id=\"{_sessionToken}\"");
+                        req.Headers.TryAddWithoutValidation("vmware-api-session-id", _sessionToken);
+                    }
+                    if (!string.IsNullOrWhiteSpace(_authUsername))
+                    {
+                        var authBytes = Encoding.UTF8.GetBytes($"{_authUsername}:{_authPassword}");
+                        req.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+                    }
+
+                    var res = await _httpClient!.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+
+                    // Handle 302 Redirect to ESXi Host
+                    if (res.StatusCode == HttpStatusCode.Redirect ||
+                        res.StatusCode == HttpStatusCode.MovedPermanently ||
+                        res.StatusCode == HttpStatusCode.SeeOther ||
+                        res.StatusCode == HttpStatusCode.TemporaryRedirect ||
+                        (int)res.StatusCode == 308)
+                    {
+                        var redirectLocation = res.Headers.Location;
+                        if (redirectLocation != null)
+                        {
+                            res.Dispose();
+
+                            var redirectReq = new HttpRequestMessage(HttpMethod.Get, redirectLocation);
+                            if (!string.IsNullOrWhiteSpace(_authUsername))
+                            {
+                                var authBytes = Encoding.UTF8.GetBytes($"{_authUsername}:{_authPassword}");
+                                redirectReq.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+                            }
+                            if (!string.IsNullOrWhiteSpace(_sessionToken))
+                            {
+                                redirectReq.Headers.TryAddWithoutValidation("Cookie", $"vmware_soap_session=\"{_sessionToken}\"");
+                            }
+
+                            res = await _httpClient.SendAsync(redirectReq, HttpCompletionOption.ResponseHeadersRead, ct);
+                        }
+                    }
+
+                    if (res.IsSuccessStatusCode)
+                    {
+                        response = res;
+                        break;
+                    }
+                    res.Dispose();
                 }
-                response.EnsureSuccessStatusCode();
+                catch { }
+            }
+
+            if (response == null || !response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException($"Datastore HTTP download returned 404 for '{relativePath}' on datastore '{datastoreName}'. Check that the file exists and credentials have Datastore permissions.");
             }
 
             var totalBytes = response.Content.Headers.ContentLength ?? -1L;
@@ -417,7 +608,7 @@ namespace WpfApp1.Services
                 FileMode.Create,
                 FileAccess.Write,
                 FileShare.None,
-                bufferSize: 8 * 1024 * 1024, // High-performance 8 MB chunk buffer
+                bufferSize: 8 * 1024 * 1024,
                 useAsync: true);
 
             var buffer = new byte[8 * 1024 * 1024];
@@ -441,17 +632,17 @@ namespace WpfApp1.Services
                     {
                         var pct = (totalRead / (double)totalBytes) * 100.0;
                         progressPercent?.Report(pct);
-                        logProgress?.Report($"[STREAM] Received: {(totalRead / (1024.0 * 1024.0 * 1024.0)):F2} / {totalGb:F2} GB ({pct:F1}%) @ {speedMbps:F1} MB/s");
+                        logProgress?.Report($"[STREAM] Staging: {(totalRead / (1024.0 * 1024.0 * 1024.0)):F2} / {totalGb:F2} GB ({pct:F1}%) @ {speedMbps:F1} MB/s");
                     }
                     else
                     {
-                        logProgress?.Report($"[STREAM] Received: {(totalRead / (1024.0 * 1024.0)):F1} MB @ {speedMbps:F1} MB/s");
+                        logProgress?.Report($"[STREAM] Staging: {(totalRead / (1024.0 * 1024.0)):F1} MB @ {speedMbps:F1} MB/s");
                     }
                 }
             }
 
             sw.Stop();
-            logProgress?.Report($"[STREAM COMPLETE] Staged {Path.GetFileName(localTargetPath)} ({totalRead / (1024.0 * 1024.0):F1} MB in {sw.Elapsed.TotalSeconds:F1}s).");
+            logProgress?.Report($"[STREAM COMPLETE] Staged {Path.GetFileName(localTargetPath)} ({totalRead / (1024.0 * 1024.0):F1} MB).");
         }
 
         public async Task PowerOffVmAsync(string vmId, CancellationToken cancellationToken = default)

@@ -287,6 +287,41 @@ namespace WpfApp1.Services
             }, cancellationToken);
         }
 
+        public async Task<bool> CheckVmExistsAsync(
+            string host,
+            string vmName,
+            string? username = null,
+            string? password = null,
+            CancellationToken cancellationToken = default)
+        {
+            return await Task.Run(() =>
+            {
+                var sanitizedHost = SanitizeHost(host);
+                var isLocal = IsLocalHost(sanitizedHost);
+
+                using var runspace = CreateRunspace(sanitizedHost, username, password, isLocal);
+                runspace.Open();
+
+                using var ps = PowerShell.Create();
+                ps.Runspace = runspace;
+
+                var safeVmName = vmName.Replace("'", "''");
+                ps.AddScript($@"
+                    Import-Module Hyper-V -ErrorAction SilentlyContinue
+                    $vm = Get-VM -Name '{safeVmName}' -ErrorAction SilentlyContinue
+                    [bool]($vm -ne $null)
+                ");
+
+                var results = ps.Invoke();
+                if (results.Count > 0 && results[0]?.BaseObject is bool exists)
+                {
+                    return exists;
+                }
+
+                return false;
+            }, cancellationToken);
+        }
+
         public async Task<HostModel> DiscoverHostCapacityAsync(
             string host,
             string? username = null,
@@ -406,6 +441,19 @@ namespace WpfApp1.Services
                 ps.AddScript(@"
                     $vols = @()
 
+                    # 1. Inspect physical disk media types to build tier classification map
+                    $mediaLookup = @{}
+                    try {
+                        Get-PhysicalDisk -ErrorAction SilentlyContinue | ForEach-Object {
+                            $diskNum = $_.DeviceId
+                            $bus = $_.BusType
+                            $media = $_.MediaType
+                            $tier = if ($bus -eq 'NVMe') { 'NVMe SSD' } elseif ($media -eq 'SSD') { 'SSD' } elseif ($media -eq 'HDD') { 'HDD' } else { 'Standard' }
+                            $mediaLookup[[string]$diskNum] = $tier
+                        }
+                    } catch {}
+
+                    # 2. Query Failover Cluster Shared Volumes (CSV)
                     if (Get-Module -ListAvailable -Name FailoverClusters) {
                         Import-Module FailoverClusters -ErrorAction SilentlyContinue
                         try {
@@ -416,7 +464,7 @@ namespace WpfApp1.Services
                                 if ($part -and $info.FriendlyVolumeName) {
                                     $vols += [PSCustomObject]@{
                                         Path = $info.FriendlyVolumeName
-                                        Label = $csv.Name
+                                        Label = ""$($csv.Name) [CSV Shared Tier]""
                                         FileSystem = 'CSVFS'
                                         FreeGB = [Math]::Round($part.FreeSpace / 1GB, 2)
                                         TotalGB = [Math]::Round($part.Size / 1GB, 2)
@@ -427,6 +475,7 @@ namespace WpfApp1.Services
                         } catch {}
                     }
 
+                    # 3. Query Fixed Local Volumes & Detect Media Tiering
                     try {
                         $localVols = Get-Volume | Where-Object { 
                             $_.DriveType -eq 'Fixed' -and 
@@ -437,9 +486,21 @@ namespace WpfApp1.Services
                         foreach ($lv in $localVols) {
                             $targetPath = if ($lv.DriveLetter) { ""$($lv.DriveLetter):\"" } else { $lv.Path }
                             if ($targetPath -and -not ($vols | Where-Object { $_.Path -eq $targetPath })) {
+                                $baseLabel = if ($lv.FileSystemLabel) { $lv.FileSystemLabel } else { 'Local Storage' }
+                                
+                                $tierTag = ''
+                                try {
+                                    if ($lv.DriveLetter) {
+                                        $part = Get-Partition -DriveLetter $lv.DriveLetter -ErrorAction SilentlyContinue
+                                        if ($part -and $mediaLookup.ContainsKey([string]$part.DiskNumber)) {
+                                            $tierTag = "" [$($mediaLookup[[string]$part.DiskNumber])]""
+                                        }
+                                    }
+                                } catch {}
+
                                 $vols += [PSCustomObject]@{
                                     Path = $targetPath
-                                    Label = if ($lv.FileSystemLabel) { $lv.FileSystemLabel } else { 'Local Storage' }
+                                    Label = ""$baseLabel$tierTag""
                                     FileSystem = $lv.FileSystem
                                     FreeGB = [Math]::Round($lv.SizeRemaining / 1GB, 2)
                                     TotalGB = [Math]::Round($lv.Size / 1GB, 2)
@@ -905,9 +966,6 @@ namespace WpfApp1.Services
         // 5. AVHDX CHECKPOINT CHAIN GUARD & INSPECTION
         // =========================================================================
 
-        /// <summary>
-        /// Queries all active checkpoints on a workload and calculates the cumulative delta AVHDX storage footprint.
-        /// </summary>
         public async Task<List<VmCheckpointInfo>> GetVmCheckpointsAsync(
             string host,
             string vmName,
@@ -1000,9 +1058,6 @@ namespace WpfApp1.Services
             }, cancellationToken);
         }
 
-        /// <summary>
-        /// Deletes a checkpoint on a workload, triggering Hyper-V's native background delta merge.
-        /// </summary>
         public async Task RemoveVmCheckpointAsync(
             string host,
             string vmName,
@@ -1039,9 +1094,6 @@ namespace WpfApp1.Services
         // 6. DEDICATED LIVE MIGRATION SUBNET ORCHESTRATION
         // =========================================================================
 
-        /// <summary>
-        /// Discovers all available physical IPv4 subnets and active VMMigrationNetwork configurations.
-        /// </summary>
         public async Task<List<MigrationSubnetModel>> GetMigrationNetworksAsync(
             string host,
             string? username = null,
@@ -1106,9 +1158,6 @@ namespace WpfApp1.Services
             }, cancellationToken);
         }
 
-        /// <summary>
-        /// Configures dedicated migration subnets and priorities on a host via Set-VMMigrationNetwork.
-        /// </summary>
         public async Task SetMigrationNetworksAsync(
             string host,
             List<MigrationSubnetModel> subnets,
@@ -1302,6 +1351,47 @@ namespace WpfApp1.Services
                 return report;
             }
 
+            // 1. Workload Name Collision Pre-Flight Check on Target Host
+            try
+            {
+                var existingVms = await DiscoverVirtualMachinesAsync(targetHost.IpAddress, targetUsername, targetPassword, cancellationToken);
+                var existingNames = new HashSet<string>(existingVms.Select(ev => ev.Name), StringComparer.OrdinalIgnoreCase);
+                var collidingNames = vms.Where(v => existingNames.Contains(v.Name)).Select(v => v.Name).ToList();
+
+                if (collidingNames.Count > 0)
+                {
+                    report.Checks.Add(new PreFlightCheckItem
+                    {
+                        CheckName = "Target Workload Name Collision",
+                        IsPassed = false,
+                        Severity = CheckSeverity.Error,
+                        Details = $"Namespace collision! Workload(s) already exist on target host '{targetHost.Hostname}': {string.Join(", ", collidingNames)}. Live migration will abort if workloads already exist.",
+                        RemediationHint = "Rename or decommission the conflicting virtual machines on the target node prior to migration."
+                    });
+                }
+                else
+                {
+                    report.Checks.Add(new PreFlightCheckItem
+                    {
+                        CheckName = "Target Workload Name Collision",
+                        IsPassed = true,
+                        Severity = CheckSeverity.Info,
+                        Details = $"Target host namespace is clear. None of the {vms.Count} workload(s) exist on node '{targetHost.Hostname}'."
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                report.Checks.Add(new PreFlightCheckItem
+                {
+                    CheckName = "Target Workload Name Collision",
+                    IsPassed = false,
+                    Severity = CheckSeverity.Warning,
+                    Details = $"Could not verify destination VM namespace over WinRM: {ex.Message}"
+                });
+            }
+
+            // 2. RAM Overhead Audit
             var totalAssignedMb = vms.Sum(v => v.AssignedRamMB);
             var requiredRamGB = (totalAssignedMb / 1024.0) + 1.5;
             var ramPassed = targetHost.AvailableRamGB >= requiredRamGB;
@@ -1316,6 +1406,7 @@ namespace WpfApp1.Services
                     : $"Insufficient RAM on target! Free: {targetHost.AvailableRamGB:F1} GB, Required: {requiredRamGB:F1} GB."
             });
 
+            // 3. Processor Contention Audit
             var totalCoresDemanded = vms.Sum(v => v.CpuCores);
             var cpuPassed = targetHost.TotalCpuCores >= (totalCoresDemanded / 2);
             report.Checks.Add(new PreFlightCheckItem
@@ -1328,7 +1419,7 @@ namespace WpfApp1.Services
                     : $"High contention: Batch demands {totalCoresDemanded} vCPUs on a host with {targetHost.TotalCpuCores} logical processors."
             });
 
-            // AVHDX Snapshot / Checkpoint Chain Guard
+            // 4. AVHDX Checkpoint Chain Guard
             var vmWithSnapshots = new List<string>();
             foreach (var vm in vms)
             {
@@ -1370,6 +1461,7 @@ namespace WpfApp1.Services
                 });
             }
 
+            // 5. Virtual Switch Parity Audit
             var uniqueSwitches = vms.Select(v => v.AssignedSwitch).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct().ToList();
             if (uniqueSwitches.Count > 0)
             {
@@ -1401,6 +1493,7 @@ namespace WpfApp1.Services
                 }
             }
 
+            // 6. Storage Backplane Target Audit
             var pathValid = string.IsNullOrWhiteSpace(destinationPath) || destinationPath.Length >= 3;
             report.Checks.Add(new PreFlightCheckItem
             {

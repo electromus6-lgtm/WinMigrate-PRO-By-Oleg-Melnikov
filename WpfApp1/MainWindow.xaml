@@ -312,7 +312,7 @@
                             <Grid Grid.Row="6">
                                 <Border x:Name="SourceEmptyState" Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="8">
                                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                        <Path Data="{StaticResource GeoServerContainer}" Fill="{StaticResource BrushTextMuted}" Stretch="Uniform" Width="44" Height="44" HorizontalAlignment="Center" Margin="0,0,0,12"/>
+                                        <Path Data="{StaticResource GeoServerContainer}" Fill="{StaticResource BrushTextMuted}" Stretch="Uniform" Width="44" Height="44" HorizontalAlignment="Center" Margin="0,0,12,0"/>
                                         <TextBlock x:Name="TxtSourceStatus" Text="Connect to a Source Host to discover VMs" Foreground="{StaticResource BrushTextMuted}" FontSize="13" HorizontalAlignment="Center"/>
                                     </StackPanel>
                                 </Border>
@@ -333,19 +333,19 @@
                                                     <Path Grid.Column="0" Data="{StaticResource GeoServerStack}" Fill="{StaticResource BrushCyanAccentHover}" Stretch="Uniform" Width="18" Height="18" Margin="0,0,12,0" VerticalAlignment="Center"/>
                                                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                         <TextBlock Text="{Binding Name}" Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="13"/>
-                                                        <TextBlock Foreground="{StaticResource BrushTextSecondary}" FontSize="11" Margin="0,2,0,0">
-                                                            <Run Text="vCPUs: "/><Run Text="{Binding CpuCores}" FontWeight="SemiBold"/>
-                                                            <Run Text=" | RAM: "/><Run Text="{Binding FormattedRam, Mode=OneWay}" FontWeight="SemiBold"/>
-                                                            <Run Text=" | Switch: "/><Run Text="{Binding AssignedSwitch}"/>
+                                                        <TextBlock Foreground="{StaticResource BrushTextSecondary}" FontSize="10.5" Margin="0,2,0,0">
+                                <Run Text="vCPUs: "/><Run Text="{Binding CpuCores, Mode=OneWay}" FontWeight="SemiBold"/>
+                                <Run Text=" | RAM: "/><Run Text="{Binding FormattedRam, Mode=OneWay}" FontWeight="SemiBold"/>
+                                <Run Text=" | "/><Run Text="{Binding GenerationLabel, Mode=OneWay}"/>
                                                         </TextBlock>
                                                     </StackPanel>
 
                                                     <!-- Edit Specs Button -->
                                                     <Button Grid.Column="2" Content="⚙ Edit Specs" Style="{StaticResource PowerOpBtn}" Tag="{Binding}" Click="BtnEditVmSpecs_Click" Padding="8,4"/>
 
-                                                    <!-- Status Badge -->
-                                                    <Border Grid.Column="4" Background="#0D253A" BorderBrush="{StaticResource BrushCyanAccent}" BorderThickness="1" CornerRadius="5" Padding="7,3" VerticalAlignment="Center">
-                                                        <TextBlock Text="{Binding Status}" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="11" FontWeight="Bold"/>
+                                                    <!-- Power Badge -->
+                                                    <Border Grid.Column="4" Background="#0A1626" BorderBrush="{Binding PowerBadgeColor, Mode=OneWay}" BorderThickness="1" CornerRadius="4" Padding="7,2" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding PowerState, Mode=OneWay}" Foreground="{Binding PowerBadgeColor, Mode=OneWay}" FontSize="10" FontWeight="Bold"/>
                                                     </Border>
                                                 </Grid>
                                             </Border>
@@ -394,7 +394,7 @@
                             <Grid Grid.Row="5">
                                 <Border x:Name="TargetEmptyState" Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="8">
                                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                        <Path Data="{StaticResource GeoServerContainer}" Fill="{StaticResource BrushTextMuted}" Stretch="Uniform" Width="44" Height="44" HorizontalAlignment="Center" Margin="0,0,0,12"/>
+                                        <Path Data="{StaticResource GeoServerContainer}" Fill="{StaticResource BrushTextMuted}" Stretch="Uniform" Width="44" Height="44" HorizontalAlignment="Center" Margin="0,0,12,0"/>
                                         <TextBlock x:Name="TxtTargetStatus" Text="Connect to a Target Host to verify capacity (Drop VM here)" Foreground="{StaticResource BrushTextMuted}" FontSize="13" HorizontalAlignment="Center"/>
                                     </StackPanel>
                                 </Border>
@@ -531,331 +531,6 @@
                             </StackPanel>
                         </Button>
                     </Grid>
-                </Border>
-
-                <!-- ===================================================== -->
-                <!-- MODAL: PRE-FLIGHT VALIDATION                          -->
-                <!-- ===================================================== -->
-                <Border x:Name="PreFlightModal" Visibility="Collapsed" Grid.RowSpan="3" Background="#E504080F" CornerRadius="12" Padding="30">
-                    <Border Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Width="680" VerticalAlignment="Center" Padding="24" Effect="{StaticResource EffectModalShadow}">
-                        <StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                                <Path Data="{StaticResource GeoPulse}" Fill="{StaticResource BrushCyanAccentHover}" Stretch="Uniform" Width="20" Height="20" Margin="0,0,10,0"/>
-                                <TextBlock Text="Automated Pre-Flight System Validation" Foreground="{StaticResource BrushTextWhite}" FontSize="16" FontWeight="Bold"/>
-                            </StackPanel>
-
-                            <ListBox x:Name="PreFlightCheckList" Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" MaxHeight="280" Margin="0,0,0,20">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="0,0,0,1" Padding="10,8">
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                </Grid.ColumnDefinitions>
-                                                <TextBlock Grid.Column="0" Text="{Binding IsPassed}" Foreground="{StaticResource BrushSuccess}" FontWeight="Bold" FontSize="14" Margin="0,0,12,0"/>
-                                                <StackPanel Grid.Column="1">
-                                                    <TextBlock Text="{Binding CheckName}" Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="12"/>
-                                                    <TextBlock Text="{Binding Details}" Foreground="{StaticResource BrushTextSecondary}" FontSize="11" TextWrapping="Wrap"/>
-                                                </StackPanel>
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                <Button Content="Cancel" Style="{StaticResource SlateOutlineBtn}" Click="BtnClosePreFlight_Click" Margin="0,0,10,0"/>
-                                <Button x:Name="BtnProceedMigration" Content="Proceed with Live Migration" Style="{StaticResource CyanActionBtn}" Click="BtnProceedMigration_Click"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-                </Border>
-
-                <!-- ===================================================== -->
-                <!-- MODAL: SCRIPT INSPECTOR                               -->
-                <!-- ===================================================== -->
-                <Border x:Name="ScriptPreviewModal" Visibility="Collapsed" Grid.RowSpan="3" Background="#E504080F" CornerRadius="12" Padding="30">
-                    <Border Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Width="760" VerticalAlignment="Center" Padding="24" Effect="{StaticResource EffectModalShadow}">
-                        <StackPanel>
-                            <Grid Margin="0,0,0,16">
-                                <StackPanel Orientation="Horizontal">
-                                    <Path Data="{StaticResource GeoTerminal}" Fill="{StaticResource BrushCyanAccentHover}" Stretch="Uniform" Width="20" Height="20" Margin="0,0,10,0"/>
-                                    <TextBlock Text="PowerShell Runbook Inspector" Foreground="{StaticResource BrushTextWhite}" FontSize="16" FontWeight="Bold"/>
-                                </StackPanel>
-                                <Button Content="✕" Style="{StaticResource PowerOpBtn}" Click="BtnCloseScriptModal_Click" HorizontalAlignment="Right" Width="26" Height="26"/>
-                            </Grid>
-
-                            <Border Background="#05080E" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,20">
-                                <TextBox x:Name="TxtScriptPreviewCode" Background="Transparent" Foreground="{StaticResource BrushCyanAccentHover}" FontFamily="Consolas" FontSize="12" BorderThickness="0" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="380" VerticalScrollBarVisibility="Auto"/>
-                            </Border>
-
-                            <Grid>
-                                <Button Content="Copy to Clipboard" Style="{StaticResource SlateOutlineBtn}" Click="BtnCopyScript_Click" HorizontalAlignment="Left" Width="160"/>
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                    <Button Content="Close" Style="{StaticResource SlateOutlineBtn}" Click="BtnCloseScriptModal_Click" Margin="0,0,10,0"/>
-                                    <Button Content="Export .ps1 File" Style="{StaticResource CyanActionBtn}" Click="BtnSaveScriptFile_Click" Width="160"/>
-                                </StackPanel>
-                            </Grid>
-                        </StackPanel>
-                    </Border>
-                </Border>
-
-                <!-- ===================================================== -->
-                <!-- MODAL: INFRASTRUCTURE DOCTOR                          -->
-                <!-- ===================================================== -->
-                <Border x:Name="InfraDoctorModal" Visibility="Collapsed" Grid.RowSpan="3" Background="#E504080F" CornerRadius="12" Padding="30">
-                    <Border Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Width="780" VerticalAlignment="Center" Padding="24" Effect="{StaticResource EffectModalShadow}">
-                        <StackPanel>
-                            <Grid Margin="0,0,0,16">
-                                <StackPanel Orientation="Horizontal">
-                                    <Path Data="{StaticResource GeoPulse}" Fill="{StaticResource BrushCyanAccentHover}" Stretch="Uniform" Width="20" Height="20" Margin="0,0,10,0"/>
-                                    <TextBlock Text="Infrastructure Doctor: Kerberos &amp; WinRM Self-Healing" Foreground="{StaticResource BrushTextWhite}" FontSize="16" FontWeight="Bold"/>
-                                </StackPanel>
-                                <Button Content="✕" Style="{StaticResource PowerOpBtn}" Click="BtnCloseDoctorModal_Click" HorizontalAlignment="Right" Width="26" Height="26"/>
-                            </Grid>
-
-                            <Grid Margin="0,0,0,16">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="12"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-
-                                <Border Grid.Column="0" Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="8" Padding="14">
-                                    <StackPanel>
-                                        <TextBlock Text="SOURCE NODE AUDIT" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="11" FontWeight="Bold"/>
-                                        <TextBlock x:Name="TxtDocSourceHost" Text="Source: Checking..." Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="13" Margin="0,4,0,8"/>
-                                        <TextBlock x:Name="TxtDocSourceMig" Text="Live Migration: Unknown" Foreground="{StaticResource BrushTextSecondary}" FontSize="12"/>
-                                        <TextBlock x:Name="TxtDocSourceAuth" Text="Auth Protocol: Unknown" Foreground="{StaticResource BrushTextSecondary}" FontSize="12" Margin="0,2,0,0"/>
-                                    </StackPanel>
-                                </Border>
-
-                                <Border Grid.Column="2" Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="8" Padding="14">
-                                    <StackPanel>
-                                        <TextBlock Text="TARGET NODE AUDIT" Foreground="{StaticResource BrushSuccess}" FontSize="11" FontWeight="Bold"/>
-                                        <TextBlock x:Name="TxtDocTargetHost" Text="Target: Checking..." Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="13" Margin="0,4,0,8"/>
-                                        <TextBlock x:Name="TxtDocTargetMig" Text="Live Migration: Unknown" Foreground="{StaticResource BrushTextSecondary}" FontSize="12"/>
-                                        <TextBlock x:Name="TxtDocTargetAuth" Text="Auth Protocol: Unknown" Foreground="{StaticResource BrushTextSecondary}" FontSize="12" Margin="0,2,0,0"/>
-                                        <TextBlock x:Name="TxtDocTargetFolder" Text="Storage Directory: Checking..." Foreground="{StaticResource BrushTextSecondary}" FontSize="12" Margin="0,2,0,0"/>
-                                    </StackPanel>
-                                </Border>
-                            </Grid>
-
-                            <Border Background="#05080E" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,18">
-                                <TextBox x:Name="TxtDoctorLogs" Background="Transparent" Foreground="{StaticResource BrushCyanAccentHover}" FontFamily="Consolas" FontSize="11" BorderThickness="0" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="160" VerticalScrollBarVisibility="Auto" Text="Audit ready. If any host protocol shows CredSSP or Disabled, click 'Auto-Repair Both Hosts' below."/>
-                            </Border>
-
-                            <Grid>
-                                <Button Content="Re-Run Audit" Style="{StaticResource SlateOutlineBtn}" Click="BtnReRunAudit_Click" HorizontalAlignment="Left" Width="140"/>
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                    <Button Content="Close" Style="{StaticResource SlateOutlineBtn}" Click="BtnCloseDoctorModal_Click" Margin="0,0,10,0"/>
-                                    <Button x:Name="BtnAutoRepairHosts" Content="⚡ 1-Click Auto-Repair Both Hosts" Style="{StaticResource CyanActionBtn}" Click="BtnAutoRepairHosts_Click" Width="260"/>
-                                </StackPanel>
-                            </Grid>
-                        </StackPanel>
-                    </Border>
-                </Border>
-
-                <!-- ===================================================== -->
-                <!-- MODAL: CPU ARCHITECTURE AUDIT & COMPATIBILITY FIX     -->
-                <!-- ===================================================== -->
-                <Border x:Name="CpuCompatibilityModal" Visibility="Collapsed" Grid.RowSpan="3" Background="#E504080F" CornerRadius="12" Padding="30">
-                    <Border Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Width="680" VerticalAlignment="Center" Padding="24" Effect="{StaticResource EffectModalShadow}">
-                        <StackPanel>
-                            <Grid Margin="0,0,0,16">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="⚡" FontSize="18" Foreground="{StaticResource BrushCyanAccentHover}" Margin="0,0,8,0"/>
-                                    <TextBlock Text="Processor Compatibility Auditor (0x80072740 Guard)" Foreground="{StaticResource BrushTextWhite}" FontSize="16" FontWeight="Bold"/>
-                                </StackPanel>
-                                <Button Content="✕" Style="{StaticResource PowerOpBtn}" Click="BtnCloseCpuModal_Click" HorizontalAlignment="Right" Width="26" Height="26"/>
-                            </Grid>
-
-                            <Border Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
-                                <Grid>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto"/>
-                                        <RowDefinition Height="Auto"/>
-                                        <RowDefinition Height="Auto"/>
-                                    </Grid.RowDefinitions>
-                                    <TextBlock Grid.Row="0" x:Name="TxtCpuSourceDetails" Text="Source Host CPU: Ingesting..." Foreground="{StaticResource BrushTextWhite}" FontSize="13"/>
-                                    <TextBlock Grid.Row="1" x:Name="TxtCpuTargetDetails" Text="Target Host CPU: Ingesting..." Foreground="{StaticResource BrushTextWhite}" FontSize="13" Margin="0,6,0,0"/>
-                                    <TextBlock Grid.Row="2" x:Name="TxtCpuAuditRecommendation" Text="Audit Status: Ready" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="12" FontWeight="SemiBold" Margin="0,10,0,0" TextWrapping="Wrap"/>
-                                </Grid>
-                            </Border>
-
-                            <TextBlock Text="Processor Compatibility Mode masks differing CPU features to permit seamless live migrations across disparate Intel or AMD generations without cold restarts." Foreground="{StaticResource BrushTextMuted}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,20"/>
-
-                            <Grid>
-                                <Button Content="Close" Style="{StaticResource SlateOutlineBtn}" Click="BtnCloseCpuModal_Click" HorizontalAlignment="Left" Width="120"/>
-                                <Button x:Name="BtnFixCpuCompatibility" Content="⚡ 1-Click Enable Processor Compatibility" Style="{StaticResource CyanActionBtn}" Click="BtnFixCpuCompatibility_Click" HorizontalAlignment="Right" Width="280"/>
-                            </Grid>
-                        </StackPanel>
-                    </Border>
-                </Border>
-
-                <!-- ===================================================== -->
-                <!-- MODAL: MULTI-vNIC REMAPPING MATRIX                    -->
-                <!-- ===================================================== -->
-                <Border x:Name="MultiNicRemapModal" Visibility="Collapsed" Grid.RowSpan="3" Background="#E504080F" CornerRadius="12" Padding="30">
-                    <Border Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Width="760" VerticalAlignment="Center" Padding="24" Effect="{StaticResource EffectModalShadow}">
-                        <StackPanel>
-                            <Grid Margin="0,0,0,16">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="🔀" FontSize="18" Foreground="{StaticResource BrushCyanAccentHover}" Margin="0,0,8,0"/>
-                                    <TextBlock Text="Multi-vNIC Virtual Switch &amp; VLAN Remapping Matrix" Foreground="{StaticResource BrushTextWhite}" FontSize="16" FontWeight="Bold"/>
-                                </StackPanel>
-                                <Button Content="✕" Style="{StaticResource PowerOpBtn}" Click="BtnCloseNicModal_Click" HorizontalAlignment="Right" Width="26" Height="26"/>
-                            </Grid>
-
-                            <TextBlock Text="Workload network adapters must connect to valid virtual switches on the target host." Foreground="{StaticResource BrushTextSecondary}" FontSize="12" Margin="0,0,0,14"/>
-
-                            <ListBox x:Name="NicMappingListBox" Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" MaxHeight="300" Margin="0,0,0,20">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="0,0,0,1" Padding="12,10">
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="180"/>
-                                                    <ColumnDefinition Width="160"/>
-                                                    <ColumnDefinition Width="20"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                </Grid.ColumnDefinitions>
-
-                                                <StackPanel Grid.Column="0">
-                                                    <TextBlock Text="{Binding AdapterName}" Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="13"/>
-                                                    <TextBlock Text="{Binding MacAddress}" Foreground="{StaticResource BrushTextMuted}" FontSize="10"/>
-                                                </StackPanel>
-
-                                                <StackPanel Grid.Column="1">
-                                                    <TextBlock Text="SOURCE SWITCH" Foreground="{StaticResource BrushTextSecondary}" FontSize="9" FontWeight="Bold"/>
-                                                    <TextBlock Text="{Binding SourceSwitchName}" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="12" FontWeight="SemiBold"/>
-                                                </StackPanel>
-
-                                                <TextBlock Grid.Column="2" Text="➔" Foreground="{StaticResource BrushTextMuted}" FontSize="14" VerticalAlignment="Center"/>
-
-                                                <StackPanel Grid.Column="3">
-                                                    <TextBlock Text="TARGET SWITCH MAPPING" Foreground="{StaticResource BrushSuccess}" FontSize="9" FontWeight="Bold"/>
-                                                    <TextBox Text="{Binding TargetSwitchName, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource EnterpriseInputTextBox}" Margin="0,2,0,0"/>
-                                                </StackPanel>
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-
-                            <Grid>
-                                <Button Content="Cancel" Style="{StaticResource SlateOutlineBtn}" Click="BtnCloseNicModal_Click" HorizontalAlignment="Left" Width="120"/>
-                                <Button Content="Save Adapter Mappings" Style="{StaticResource CyanActionBtn}" Click="BtnApplyNicMappings_Click" HorizontalAlignment="Right" Width="180"/>
-                            </Grid>
-                        </StackPanel>
-                    </Border>
-                </Border>
-
-                <!-- ===================================================== -->
-                <!-- MODAL: DISAGGREGATED MULTI-VHDX STORAGE MATRIX        -->
-                <!-- ===================================================== -->
-                <Border x:Name="DisaggregatedStorageModal" Visibility="Collapsed" Grid.RowSpan="3" Background="#E504080F" CornerRadius="12" Padding="30">
-                    <Border Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Width="820" VerticalAlignment="Center" Padding="24" Effect="{StaticResource EffectModalShadow}">
-                        <StackPanel>
-                            <Grid Margin="0,0,0,16">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="💾" FontSize="18" Foreground="{StaticResource BrushCyanAccentHover}" Margin="0,0,8,0"/>
-                                    <TextBlock Text="Multi-VHDX Storage Disaggregation Matrix" Foreground="{StaticResource BrushTextWhite}" FontSize="16" FontWeight="Bold"/>
-                                </StackPanel>
-                                <Button Content="✕" Style="{StaticResource PowerOpBtn}" Click="BtnCloseDisaggregatedModal_Click" HorizontalAlignment="Right" Width="26" Height="26"/>
-                            </Grid>
-
-                            <TextBlock Text="Route distinct virtual hard disks to specific destination volumes (e.g., CSV Volume 1 for OS, Volume 2 for Data)." Foreground="{StaticResource BrushTextSecondary}" FontSize="12" Margin="0,0,0,14"/>
-
-                            <ListBox x:Name="DisaggregatedDisksListBox" Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" MaxHeight="300" Margin="0,0,0,20">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="0,0,0,1" Padding="12,10">
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="220"/>
-                                                    <ColumnDefinition Width="80"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                </Grid.ColumnDefinitions>
-
-                                                <StackPanel Grid.Column="0">
-                                                    <TextBlock Text="{Binding FileName}" Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="12" TextTrimming="CharacterEllipsis"/>
-                                                    <TextBlock Text="{Binding ControllerType}" Foreground="{StaticResource BrushTextMuted}" FontSize="10"/>
-                                                </StackPanel>
-
-                                                <TextBlock Grid.Column="1" Text="{Binding SizeFormatted}" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="12" VerticalAlignment="Center"/>
-
-                                                <StackPanel Grid.Column="2">
-                                                    <TextBlock Text="TARGET DIRECTORY PATH" Foreground="{StaticResource BrushSuccess}" FontSize="9" FontWeight="Bold"/>
-                                                    <TextBox Text="{Binding TargetDirectoryPath, UpdateSourceTrigger=PropertyChanged}" Tag="e.g. C:\ClusterStorage\Volume2\VMs" Style="{StaticResource EnterpriseInputTextBox}" Margin="0,2,0,0"/>
-                                                </StackPanel>
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-
-                            <Grid>
-                                <Button Content="Cancel" Style="{StaticResource SlateOutlineBtn}" Click="BtnCloseDisaggregatedModal_Click" HorizontalAlignment="Left" Width="120"/>
-                                <Button Content="Save Storage Routing" Style="{StaticResource CyanActionBtn}" Click="BtnApplyDisaggregatedPaths_Click" HorizontalAlignment="Right" Width="180"/>
-                            </Grid>
-                        </StackPanel>
-                    </Border>
-                </Border>
-
-                <!-- ===================================================== -->
-                <!-- MODAL: MAINTENANCE WINDOW SCHEDULER                   -->
-                <!-- ===================================================== -->
-                <Border x:Name="SchedulerModal" Visibility="Collapsed" Grid.RowSpan="3" Background="#E504080F" CornerRadius="12" Padding="30">
-                    <Border Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Width="640" VerticalAlignment="Center" Padding="24" Effect="{StaticResource EffectModalShadow}">
-                        <StackPanel>
-                            <Grid Margin="0,0,0,16">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="⏱" FontSize="18" Foreground="{StaticResource BrushSuccess}" Margin="0,0,8,0"/>
-                                    <TextBlock Text="Maintenance Window &amp; Batch Scheduler" Foreground="{StaticResource BrushTextWhite}" FontSize="16" FontWeight="Bold"/>
-                                </StackPanel>
-                                <Button Content="✕" Style="{StaticResource PowerOpBtn}" Click="BtnCloseSchedulerModal_Click" HorizontalAlignment="Right" Width="26" Height="26"/>
-                            </Grid>
-
-                            <!-- Batch Name -->
-                            <TextBlock Text="BATCH NAME" Foreground="{StaticResource BrushTextSecondary}" FontSize="10" FontWeight="Bold" Margin="0,0,0,4"/>
-                            <TextBox x:Name="TxtScheduleBatchName" Text="Datacenter Evacuation Window" Style="{StaticResource EnterpriseInputTextBox}" Margin="0,0,0,14"/>
-
-                            <!-- Execution Time Picker -->
-                            <TextBlock Text="SCHEDULED TIME (UTC / LOCAL)" Foreground="{StaticResource BrushTextSecondary}" FontSize="10" FontWeight="Bold" Margin="0,0,0,4"/>
-                            <DatePicker x:Name="DpScheduleDate" Margin="0,0,0,8" Background="#08111D" Foreground="{StaticResource BrushTextWhite}"/>
-                            <TextBox x:Name="TxtScheduleTime" Text="02:00" Tag="HH:mm (24hr)" Style="{StaticResource EnterpriseInputTextBox}" Margin="0,0,0,14"/>
-
-                            <!-- Concurrency Throttling -->
-                            <Grid Margin="0,0,0,14">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="100"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0">
-                                    <TextBlock Text="CONCURRENCY LIMIT (SEMAPHORE)" Foreground="{StaticResource BrushTextSecondary}" FontSize="10" FontWeight="Bold"/>
-                                    <TextBlock Text="Max parallel live migrations to prevent NIC/IOPS saturation." Foreground="{StaticResource BrushTextMuted}" FontSize="10" Margin="0,2,0,0"/>
-                                </StackPanel>
-                                <TextBox Grid.Column="1" x:Name="TxtScheduleConcurrency" Text="2" Style="{StaticResource EnterpriseInputTextBox}" HorizontalContentAlignment="Center"/>
-                            </Grid>
-
-                            <!-- Post-Flight Auto-Rollback -->
-                            <Border Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,20">
-                                <CheckBox x:Name="ChkAutoRollback" IsChecked="True">
-                                    <StackPanel Margin="6,0,0,0">
-                                        <TextBlock Text="Auto-Rollback on Guest Heartbeat Failure" Foreground="{StaticResource BrushTextWhite}" FontWeight="SemiBold" FontSize="12"/>
-                                        <TextBlock Text="Automatically migrates workload back to source if guest OS fails to report healthy heartbeat within 180s." Foreground="{StaticResource BrushTextMuted}" FontSize="10" Margin="0,2,0,0"/>
-                                    </StackPanel>
-                                </CheckBox>
-                            </Border>
-
-                            <Grid>
-                                <Button Content="Cancel" Style="{StaticResource SlateOutlineBtn}" Click="BtnCloseSchedulerModal_Click" HorizontalAlignment="Left" Width="120"/>
-                                <Button Content="Enqueue Scheduled Batch" Style="{StaticResource CyanActionBtn}" Click="BtnConfirmScheduleBatch_Click" HorizontalAlignment="Right" Width="200"/>
-                            </Grid>
-                        </StackPanel>
-                    </Border>
                 </Border>
 
             </Grid>
@@ -1245,11 +920,11 @@
                             </Grid>
                         </Border>
 
-                       
-                       <Button x:Name="BtnSaveSettings" Content="Save Configuration" Style="{StaticResource CyanActionBtn}" Click="BtnSaveSettings_Click" HorizontalAlignment="Right" Width="160"/>
+                        <Button x:Name="BtnSaveSettings" Content="Save Configuration" Style="{StaticResource CyanActionBtn}" Click="BtnSaveSettings_Click" HorizontalAlignment="Right" Width="160"/>
                     </StackPanel>
                 </Border>
             </Grid>
+
             <!-- ===================================================== -->
             <!-- 5. vCENTER TO HYPER-V V2V IMPORTER VIEW               -->
             <!-- ===================================================== -->
@@ -1331,18 +1006,48 @@
                                                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                         <TextBlock Text="{Binding Name}" Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="13"/>
                                                         <TextBlock Foreground="{StaticResource BrushTextSecondary}" FontSize="11" Margin="0,2,0,0">
-                                                            <Run Text="vCPUs: "/><Run Text="{Binding CpuCount}" FontWeight="SemiBold"/>
+                                                            <Run Text="vCPUs: "/><Run Text="{Binding CpuCount, Mode=OneWay}" FontWeight="SemiBold"/>
                                                             <Run Text=" | RAM: "/><Run Text="{Binding FormattedRam, Mode=OneWay}" FontWeight="SemiBold"/>
-                                                            <Run Text=" | Disks: "/><Run Text="{Binding Disks.Count, Mode=OneWay}"/>
+                                                            <Run Text=" | Disks: "/><Run Text="{Binding DiskCount, Mode=OneWay}"/>
                                                         </TextBlock>
                                                     </StackPanel>
                                                     <!-- Firmware Badge (EFI vs BIOS) -->
                                                     <Border Grid.Column="2" Background="#0E2338" BorderBrush="{StaticResource BrushCyanAccentHover}" BorderThickness="1" CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
-                                                        <TextBlock Text="{Binding Firmware}" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="10" FontWeight="Bold"/>
+                                                        <TextBlock Text="{Binding Firmware, Mode=OneWay}" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="10" FontWeight="Bold"/>
                                                     </Border>
                                                     <!-- Power Badge -->
-                                                    <Border Grid.Column="4" Background="#0D253A" BorderThickness="1" CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
-                                                        <TextBlock Text="{Binding PowerState}" Foreground="{Binding StatusBadgeColor}" FontSize="10" FontWeight="SemiBold"/>
+                                                    <Border Grid.Column="4" Background="#0A1626" BorderThickness="1" CornerRadius="4" Padding="7,2" VerticalAlignment="Center">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="BorderBrush" Value="#EF4444"/>
+                                                                <Setter Property="Background" Value="#260A0A"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding PowerState}" Value="PoweredOn">
+                                                                        <Setter Property="BorderBrush" Value="#10B981"/>
+                                                                        <Setter Property="Background" Value="#06281E"/>
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding PowerState}" Value="Suspended">
+                                                                        <Setter Property="BorderBrush" Value="#F59E0B"/>
+                                                                        <Setter Property="Background" Value="#261E0A"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                        <TextBlock Text="{Binding PowerState, Mode=OneWay}" FontSize="10" FontWeight="Bold">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Foreground" Value="#EF4444"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding PowerState}" Value="PoweredOn">
+                                                                            <Setter Property="Foreground" Value="#10B981"/>
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding PowerState}" Value="Suspended">
+                                                                            <Setter Property="Foreground" Value="#F59E0B"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
                                                     </Border>
                                                 </Grid>
                                             </Border>
@@ -1353,8 +1058,8 @@
                         </Grid>
                     </Border>
 
-                    <!-- RIGHT CARD: TARGET HYPER-V & CONVERSION STAGING -->
-                    <Border Grid.Column="2" Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Padding="20">
+                    <!-- RIGHT CARD: TARGET HYPER-V & WORKLOAD EXPLORER -->
+                    <Border Grid.Column="2" Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Padding="18">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -1366,69 +1071,466 @@
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Row="0" Text="Target Hyper-V Staging &amp; Conversion" Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="15" Margin="0,0,0,12"/>
+                            <TextBlock Grid.Row="0" Text="Target Hyper-V Staging &amp; Workload Explorer" Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="15" Margin="0,0,0,10"/>
 
                             <!-- Target Host IP -->
-                            <TextBox Grid.Row="1" x:Name="TxtV2VTargetHost" Text="192.168.25.29" Tag="Target Hyper-V Host (IP or FQDN)" Style="{StaticResource EnterpriseInputTextBox}" Margin="0,0,0,8"/>
+                            <TextBox Grid.Row="1" x:Name="TxtV2VTargetHost" Text="192.168.25.29" Tag="Target Hyper-V Host (IP or FQDN)" Style="{StaticResource EnterpriseInputTextBox}" Margin="0,0,0,6"/>
 
                             <!-- Target Credentials -->
-                            <Grid Grid.Row="2" Margin="0,0,0,10">
+                            <Grid Grid.Row="2" Margin="0,0,0,8">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="10"/>
+                                    <ColumnDefinition Width="8"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBox Grid.Column="0" x:Name="TxtV2VTargetUser" Tag="Domain\User (Optional)" Style="{StaticResource EnterpriseInputTextBox}"/>
                                 <PasswordBox Grid.Column="2" x:Name="TxtV2VTargetPass" Tag="Password (Optional)" Style="{StaticResource EnterpriseInputPasswordBox}" PasswordChanged="PasswordBox_PasswordChanged"/>
                             </Grid>
 
-                            <!-- Connect Target Button -->
-                            <Button Grid.Row="3" x:Name="BtnConnectV2VTarget" Content="Connect &amp; Discover Hyper-V Switches" Style="{StaticResource CyanActionBtn}" Click="BtnConnectV2VTarget_Click" Margin="0,0,0,12"/>
-
-                            <!-- Storage Path & Virtual Switch -->
-                            <Grid Grid.Row="4" Margin="0,0,0,12">
+                            <!-- Connect Target Button & Network Status Badge -->
+                            <Grid Grid.Row="3" Margin="0,0,0,10">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="10"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" x:Name="BtnConnectV2VTarget" Content="Connect &amp; Discover Node Capacity" Style="{StaticResource CyanActionBtn}" Click="BtnConnectV2VTarget_Click"/>
+                                <Border Grid.Column="1" x:Name="V2VTargetNetworkBadge" Visibility="Collapsed" Background="#0C1B2A" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="6" Padding="8,4" Margin="8,0,0,0">
+                                    <TextBlock x:Name="TxtV2VTargetNetworkStatus" Foreground="{StaticResource BrushSuccess}" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                </Border>
+                            </Grid>
+
+                            <!-- Storage Backplane Volume Picker & Virtual Switch -->
+                            <Grid Grid.Row="4" Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Grid.Column="0">
-                                    <TextBlock Text="DESTINATION CSV / STORAGE PATH" Foreground="{StaticResource BrushTextSecondary}" FontSize="10" FontWeight="Bold" Margin="0,0,0,4"/>
-                                    <TextBox x:Name="TxtV2VStoragePath" Text="C:\ClusterStorage\Volume1" Tag="Storage Path" Style="{StaticResource EnterpriseInputTextBox}"/>
+                                    <TextBlock Text="DESTINATION STORAGE POOL / CSV" Foreground="{StaticResource BrushTextSecondary}" FontSize="9.5" FontWeight="Bold" Margin="0,0,0,3"/>
+                                    <ComboBox x:Name="CmbV2VStorageVolumes" Style="{StaticResource HighContrastStorageComboBox}" SelectionChanged="CmbV2VStorageVolumes_SelectionChanged">
+                                        <ComboBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal" Margin="2">
+                                                    <Border Background="#0D253A" BorderBrush="{StaticResource BrushCyanAccent}" BorderThickness="1" CornerRadius="4" Padding="5,1" Margin="0,0,6,0">
+                                                        <TextBlock Text="{Binding StorageTypeBadge}" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="9.5" FontWeight="Bold"/>
+                                                    </Border>
+                                                    <TextBlock Text="{Binding Label}" Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="11.5" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                                    <TextBlock Foreground="{StaticResource BrushSuccess}" FontWeight="SemiBold" FontSize="10.5" VerticalAlignment="Center">
+                                                        <Run Text="(" /><Run Text="{Binding FreeSpaceGB, StringFormat='{}{0:F1}'}" /><Run Text=" GB Free)" />
+                                                    </TextBlock>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ComboBox.ItemTemplate>
+                                    </ComboBox>
                                 </StackPanel>
                                 <StackPanel Grid.Column="2">
-                                    <TextBlock Text="TARGET VIRTUAL SWITCH" Foreground="{StaticResource BrushTextSecondary}" FontSize="10" FontWeight="Bold" Margin="0,0,0,4"/>
+                                    <TextBlock Text="TARGET VIRTUAL SWITCH" Foreground="{StaticResource BrushTextSecondary}" FontSize="9.5" FontWeight="Bold" Margin="0,0,0,3"/>
                                     <ComboBox x:Name="CmbV2VSwitches" Style="{StaticResource HighContrastStorageComboBox}"/>
                                 </StackPanel>
                             </Grid>
 
-                            <!-- Conversion Specifications & Detected Engine -->
-                            <Border Grid.Row="5" Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,14">
-                                <StackPanel>
-                                    <TextBlock Text="CONVERSION ARCHITECTURE" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="11" FontWeight="Bold" Margin="0,0,0,6"/>
-                                    <TextBlock x:Name="TxtV2VSelectedVmInfo" Text="Select a VMware VM on the left to review conversion specs." Foreground="{StaticResource BrushTextWhite}" FontSize="12" TextWrapping="Wrap"/>
-                                    <TextBlock x:Name="TxtV2VFirmwareParity" Text="Target Generation: Auto-detected from firmware" Foreground="{StaticResource BrushSuccess}" FontSize="11.5" FontWeight="SemiBold" Margin="0,4,0,0"/>
-                                    <Separator Background="{StaticResource BrushCardBorder}" Margin="0,10,0,10"/>
-                                    <TextBlock x:Name="TxtV2VEngineStatus" Text="Conversion Engine: Detecting StarWind CLI &amp; qemu-img..." Foreground="{StaticResource BrushTextSecondary}" FontSize="11" TextWrapping="Wrap"/>
-                                </StackPanel>
-                            </Border>
+                            <!-- LIVE WORKLOAD & CAPACITY EXPLORER PANEL -->
+                            <Grid Grid.Row="5" Margin="0,0,0,10">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <!-- Header Banner -->
+                                <Border Grid.Row="0" Background="#0A1524" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1,1,1,0" CornerRadius="8,8,0,0" Padding="10,6">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Path Data="{StaticResource GeoServerContainer}" Fill="{StaticResource BrushCyanAccentHover}" Stretch="Uniform" Width="13" Height="13" Margin="0,0,6,0"/>
+                                            <TextBlock Text="TARGET NODE WORKLOADS &amp; COLLISION AUDIT" Foreground="{StaticResource BrushTextWhite}" FontSize="10.5" FontWeight="Bold"/>
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" x:Name="TxtTargetVmCount" Text="0 Workloads Detected" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="10" FontWeight="SemiBold"/>
+                                    </Grid>
+                                </Border>
+
+                                <!-- Target Workloads List -->
+                                <Border Grid.Row="1" Background="#060C14" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="0,0,8,8">
+                                    <Grid>
+                                        <Border x:Name="TargetV2VEmptyState" Background="#08111D">
+                                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                <TextBlock Text="Connect to Target Hyper-V to audit existing workloads" Foreground="{StaticResource BrushTextMuted}" FontSize="11" HorizontalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <ListBox x:Name="TargetHyperVVmListBox" Background="Transparent" BorderThickness="0" Foreground="{StaticResource BrushTextWhite}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Background="{Binding CardBackgroundBrush}" BorderBrush="{Binding CardBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,2">
+                                                        <Grid>
+                                                            <Grid.RowDefinitions>
+                                                                <RowDefinition Height="Auto"/>
+                                                                <RowDefinition Height="Auto"/>
+                                                            </Grid.RowDefinitions>
+
+                                                            <!-- Row 0: VM Name, Collision Alert Badge, State -->
+                                                            <Grid Grid.Row="0">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                </Grid.ColumnDefinitions>
+
+                                                                <TextBlock Grid.Column="0" Text="{Binding Name}" Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+
+                                                                <!-- Collision Warning Badge -->
+                                                                <Border Grid.Column="1" Visibility="{Binding IsNameCollision, Converter={StaticResource BoolToVis}}" Background="#3B0B0B" BorderBrush="#EF4444" BorderThickness="1" CornerRadius="4" Padding="6,1" Margin="0,0,6,0">
+                                                                    <TextBlock Text="⚠️ NAME COLLISION" Foreground="#EF4444" FontSize="9" FontWeight="Bold"/>
+                                                                </Border>
+
+                                                                <!-- Generation Badge -->
+                                                                <Border Grid.Column="2" Background="#0E2338" BorderBrush="{StaticResource BrushCyanAccentHover}" BorderThickness="1" CornerRadius="4" Padding="5,1">
+                                                                    <TextBlock Text="{Binding GenerationLabel}" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="9" FontWeight="Bold"/>
+                                                                </Border>
+                                                            </Grid>
+
+                                                            <!-- Row 1: Specs & Disks -->
+                                                            <Grid Grid.Row="1" Margin="0,4,0,0">
+                                                                <TextBlock Foreground="{StaticResource BrushTextSecondary}" FontSize="10.5">
+                                                                    <Run Text="vCPUs: "/><Run Text="{Binding CpuCores}" FontWeight="SemiBold"/>
+                                                                    <Run Text=" | RAM: "/><Run Text="{Binding FormattedRam}" FontWeight="SemiBold"/>
+                                                                    <Run Text=" | "/><Run Text="{Binding DiskSummary}" Foreground="{StaticResource BrushTextMuted}"/>
+                                                                </TextBlock>
+                                                            </Grid>
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </Grid>
+                                </Border>
+
+                                <!-- CONVERSION ARCHITECTURE & STORAGE TIERING CARD -->
+                                <Border Grid.Row="2" Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,8,0,0">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                            <TextBlock Text="CONVERSION ARCHITECTURE" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="10" FontWeight="Bold" Margin="0,0,0,3"/>
+                                            <TextBlock x:Name="TxtV2VSelectedVmInfo" Text="Select a VMware VM on the left to review conversion specs." Foreground="{StaticResource BrushTextWhite}" FontSize="11" TextWrapping="Wrap"/>
+                                            <TextBlock x:Name="TxtV2VFirmwareParity" Text="Target Generation: Auto-detected from firmware" Foreground="{StaticResource BrushSuccess}" FontSize="10.5" FontWeight="SemiBold" Margin="0,2,0,0"/>
+                                            <TextBlock x:Name="TxtV2VEngineStatus" Text="Engine: Standalone qemu-img.exe Ready" Foreground="{StaticResource BrushTextSecondary}" FontSize="10" Margin="0,2,0,0"/>
+                                        </StackPanel>
+
+                                        <!-- Multi-Disk Storage Tiering Matrix Opener Button -->
+                                        <Button Grid.Column="1" x:Name="BtnOpenV2VTieringModal" Content="💽 Storage Tiering" Style="{StaticResource SlateOutlineBtn}" Click="BtnOpenV2VTieringModal_Click" VerticalAlignment="Center" Padding="10,6" ToolTip="Route Boot VHDX to NVMe SSD and Data VHDXs to High-Capacity HDD tiers"/>
+                                    </Grid>
+                                </Border>
+                            </Grid>
 
                             <!-- Progress & Execute Bar -->
                             <StackPanel Grid.Row="6">
-                                <Grid Margin="0,0,0,6">
-                                    <TextBlock x:Name="TxtV2VStepText" Text="Idle" Foreground="{StaticResource BrushTextSecondary}" FontSize="11"/>
-                                    <TextBlock x:Name="TxtV2VPercentText" Text="0%" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="11" FontWeight="Bold" HorizontalAlignment="Right"/>
+                                <Grid Margin="0,0,0,4">
+                                    <TextBlock x:Name="TxtV2VStepText" Text="Idle" Foreground="{StaticResource BrushTextSecondary}" FontSize="10.5"/>
+                                    <TextBlock x:Name="TxtV2VPercentText" Text="0%" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="10.5" FontWeight="Bold" HorizontalAlignment="Right"/>
                                 </Grid>
-                                <ProgressBar x:Name="PbV2VProgress" Height="8" Margin="0,0,0,12" Value="0"/>
-                                <Button x:Name="BtnExecuteV2V" Content="▶ Convert &amp; Migrate to Hyper-V" Style="{StaticResource CyanActionBtn}" Click="BtnExecuteV2V_Click" Height="42" FontSize="14"/>
+                                <ProgressBar x:Name="PbV2VProgress" Height="7" Margin="0,0,0,8" Value="0"/>
+                                <Button x:Name="BtnExecuteV2V" Content="▶ Convert &amp; Migrate to Hyper-V" Style="{StaticResource CyanActionBtn}" Click="BtnExecuteV2V_Click" Height="38" FontSize="13"/>
                             </StackPanel>
                         </Grid>
                     </Border>
                 </Grid>
             </Grid>
+
             <!-- ========================================================= -->
             <!-- ROOT OVERLAY MODALS (ACCESSIBLE FROM ALL VIEWS)           -->
             <!-- ========================================================= -->
+
+            <!-- MODAL: PRE-FLIGHT VALIDATION -->
+            <Border x:Name="PreFlightModal" Visibility="Collapsed" Grid.RowSpan="3" Background="#E504080F" CornerRadius="12" Padding="30">
+                <Border Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Width="680" VerticalAlignment="Center" Padding="24" Effect="{StaticResource EffectModalShadow}">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                            <Path Data="{StaticResource GeoPulse}" Fill="{StaticResource BrushCyanAccentHover}" Stretch="Uniform" Width="20" Height="20" Margin="0,0,10,0"/>
+                            <TextBlock Text="Automated Pre-Flight System Validation" Foreground="{StaticResource BrushTextWhite}" FontSize="16" FontWeight="Bold"/>
+                        </StackPanel>
+
+                        <ListBox x:Name="PreFlightCheckList" Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" MaxHeight="280" Margin="0,0,0,20">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="0,0,0,1" Padding="10,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding IsPassed}" Foreground="{StaticResource BrushSuccess}" FontWeight="Bold" FontSize="14" Margin="0,0,12,0"/>
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="{Binding CheckName}" Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="12"/>
+                                                <TextBlock Text="{Binding Details}" Foreground="{StaticResource BrushTextSecondary}" FontSize="11" TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="Cancel" Style="{StaticResource SlateOutlineBtn}" Click="BtnClosePreFlight_Click" Margin="0,0,10,0"/>
+                            <Button x:Name="BtnProceedMigration" Content="Proceed with Live Migration" Style="{StaticResource CyanActionBtn}" Click="BtnProceedMigration_Click"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Border>
+
+            <!-- MODAL: INFRASTRUCTURE DOCTOR -->
+            <Border x:Name="InfraDoctorModal" Visibility="Collapsed" Grid.RowSpan="3" Background="#E504080F" CornerRadius="12" Padding="30">
+                <Border Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Width="780" VerticalAlignment="Center" Padding="24" Effect="{StaticResource EffectModalShadow}">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,16">
+                            <StackPanel Orientation="Horizontal">
+                                <Path Data="{StaticResource GeoPulse}" Fill="{StaticResource BrushCyanAccentHover}" Stretch="Uniform" Width="20" Height="20" Margin="0,0,10,0"/>
+                                <TextBlock Text="Infrastructure Doctor: Kerberos &amp; WinRM Self-Healing" Foreground="{StaticResource BrushTextWhite}" FontSize="16" FontWeight="Bold"/>
+                            </StackPanel>
+                            <Button Content="✕" Style="{StaticResource PowerOpBtn}" Click="BtnCloseDoctorModal_Click" HorizontalAlignment="Right" Width="26" Height="26"/>
+                        </Grid>
+
+                        <Grid Margin="0,0,0,16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Border Grid.Column="0" Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="8" Padding="14">
+                                <StackPanel>
+                                    <TextBlock Text="SOURCE NODE AUDIT" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="11" FontWeight="Bold"/>
+                                    <TextBlock x:Name="TxtDocSourceHost" Text="Source: Checking..." Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="13" Margin="0,4,0,8"/>
+                                    <TextBlock x:Name="TxtDocSourceMig" Text="Live Migration: Unknown" Foreground="{StaticResource BrushTextSecondary}" FontSize="12"/>
+                                    <TextBlock x:Name="TxtDocSourceAuth" Text="Auth Protocol: Unknown" Foreground="{StaticResource BrushTextSecondary}" FontSize="12" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Column="2" Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="8" Padding="14">
+                                <StackPanel>
+                                    <TextBlock Text="TARGET NODE AUDIT" Foreground="{StaticResource BrushSuccess}" FontSize="11" FontWeight="Bold"/>
+                                    <TextBlock x:Name="TxtDocTargetHost" Text="Target: Checking..." Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="13" Margin="0,4,0,8"/>
+                                    <TextBlock x:Name="TxtDocTargetMig" Text="Live Migration: Unknown" Foreground="{StaticResource BrushTextSecondary}" FontSize="12"/>
+                                    <TextBlock x:Name="TxtDocTargetAuth" Text="Auth Protocol: Unknown" Foreground="{StaticResource BrushTextSecondary}" FontSize="12" Margin="0,2,0,0"/>
+                                    <TextBlock x:Name="TxtDocTargetFolder" Text="Storage Directory: Checking..." Foreground="{StaticResource BrushTextSecondary}" FontSize="12" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <Border Background="#05080E" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,18">
+                            <TextBox x:Name="TxtDoctorLogs" Background="Transparent" Foreground="{StaticResource BrushCyanAccentHover}" FontFamily="Consolas" FontSize="11" BorderThickness="0" IsReadOnly="True" TextWrapping="Wrap" MaxHeight="160" VerticalScrollBarVisibility="Auto" Text="Audit ready. If any host protocol shows CredSSP or Disabled, click 'Auto-Repair Both Hosts' below."/>
+                        </Border>
+
+                        <Grid>
+                            <Button Content="Re-Run Audit" Style="{StaticResource SlateOutlineBtn}" Click="BtnReRunAudit_Click" HorizontalAlignment="Left" Width="140"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button Content="Close" Style="{StaticResource SlateOutlineBtn}" Click="BtnCloseDoctorModal_Click" Margin="0,0,10,0"/>
+                                <Button x:Name="BtnAutoRepairHosts" Content="⚡ 1-Click Auto-Repair Both Hosts" Style="{StaticResource CyanActionBtn}" Click="BtnAutoRepairHosts_Click" Width="260"/>
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </Border>
+
+            <!-- MODAL: CPU ARCHITECTURE AUDIT & COMPATIBILITY FIX -->
+            <Border x:Name="CpuCompatibilityModal" Visibility="Collapsed" Grid.RowSpan="3" Background="#E504080F" CornerRadius="12" Padding="30">
+                <Border Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Width="680" VerticalAlignment="Center" Padding="24" Effect="{StaticResource EffectModalShadow}">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,16">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="⚡" FontSize="18" Foreground="{StaticResource BrushCyanAccentHover}" Margin="0,0,8,0"/>
+                                <TextBlock Text="Processor Compatibility Auditor (0x80072740 Guard)" Foreground="{StaticResource BrushTextWhite}" FontSize="16" FontWeight="Bold"/>
+                            </StackPanel>
+                            <Button Content="✕" Style="{StaticResource PowerOpBtn}" Click="BtnCloseCpuModal_Click" HorizontalAlignment="Right" Width="26" Height="26"/>
+                        </Grid>
+
+                        <Border Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" x:Name="TxtCpuSourceDetails" Text="Source Host CPU: Ingesting..." Foreground="{StaticResource BrushTextWhite}" FontSize="13"/>
+                                <TextBlock Grid.Row="1" x:Name="TxtCpuTargetDetails" Text="Target Host CPU: Ingesting..." Foreground="{StaticResource BrushTextWhite}" FontSize="13" Margin="0,6,0,0"/>
+                                <TextBlock Grid.Row="2" x:Name="TxtCpuAuditRecommendation" Text="Audit Status: Ready" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="12" FontWeight="SemiBold" Margin="0,10,0,0" TextWrapping="Wrap"/>
+                            </Grid>
+                        </Border>
+
+                        <TextBlock Text="Processor Compatibility Mode masks differing CPU features to permit seamless live migrations across disparate Intel or AMD generations without cold restarts." Foreground="{StaticResource BrushTextMuted}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,20"/>
+
+                        <Grid>
+                            <Button Content="Close" Style="{StaticResource SlateOutlineBtn}" Click="BtnCloseCpuModal_Click" HorizontalAlignment="Left" Width="120"/>
+                            <Button x:Name="BtnFixCpuCompatibility" Content="⚡ 1-Click Enable Processor Compatibility" Style="{StaticResource CyanActionBtn}" Click="BtnFixCpuCompatibility_Click" HorizontalAlignment="Right" Width="280"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </Border>
+
+            <!-- MODAL: MULTI-vNIC REMAPPING MATRIX -->
+            <Border x:Name="MultiNicRemapModal" Visibility="Collapsed" Grid.RowSpan="3" Background="#E504080F" CornerRadius="12" Padding="30">
+                <Border Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Width="760" VerticalAlignment="Center" Padding="24" Effect="{StaticResource EffectModalShadow}">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,16">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="🔀" FontSize="18" Foreground="{StaticResource BrushCyanAccentHover}" Margin="0,0,8,0"/>
+                                <TextBlock Text="Multi-vNIC Virtual Switch &amp; VLAN Remapping Matrix" Foreground="{StaticResource BrushTextWhite}" FontSize="16" FontWeight="Bold"/>
+                            </StackPanel>
+                            <Button Content="✕" Style="{StaticResource PowerOpBtn}" Click="BtnCloseNicModal_Click" HorizontalAlignment="Right" Width="26" Height="26"/>
+                        </Grid>
+
+                        <TextBlock Text="Workload network adapters must connect to valid virtual switches on the target host." Foreground="{StaticResource BrushTextSecondary}" FontSize="12" Margin="0,0,0,14"/>
+
+                        <ListBox x:Name="NicMappingListBox" Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" MaxHeight="300" Margin="0,0,0,20">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="0,0,0,1" Padding="12,10">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="180"/>
+                                                <ColumnDefinition Width="160"/>
+                                                <ColumnDefinition Width="20"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="{Binding AdapterName}" Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="13"/>
+                                                <TextBlock Text="{Binding MacAddress}" Foreground="{StaticResource BrushTextMuted}" FontSize="10"/>
+                                            </StackPanel>
+
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="SOURCE SWITCH" Foreground="{StaticResource BrushTextSecondary}" FontSize="9" FontWeight="Bold"/>
+                                                <TextBlock Text="{Binding SourceSwitchName}" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="12" FontWeight="SemiBold"/>
+                                            </StackPanel>
+
+                                            <TextBlock Grid.Column="2" Text="➔" Foreground="{StaticResource BrushTextMuted}" FontSize="14" VerticalAlignment="Center"/>
+
+                                            <StackPanel Grid.Column="3">
+                                                <TextBlock Text="TARGET SWITCH MAPPING" Foreground="{StaticResource BrushSuccess}" FontSize="9" FontWeight="Bold"/>
+                                                <TextBox Text="{Binding TargetSwitchName, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource EnterpriseInputTextBox}" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <Grid>
+                            <Button Content="Cancel" Style="{StaticResource SlateOutlineBtn}" Click="BtnCloseNicModal_Click" HorizontalAlignment="Left" Width="120"/>
+                            <Button Content="Save Adapter Mappings" Style="{StaticResource CyanActionBtn}" Click="BtnApplyNicMappings_Click" HorizontalAlignment="Right" Width="180"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </Border>
+
+            <!-- MODAL: DISAGGREGATED MULTI-VHDX STORAGE MATRIX -->
+            <Border x:Name="DisaggregatedStorageModal" Visibility="Collapsed" Grid.RowSpan="3" Background="#E504080F" CornerRadius="12" Padding="30">
+                <Border Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Width="820" VerticalAlignment="Center" Padding="24" Effect="{StaticResource EffectModalShadow}">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,16">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="💾" FontSize="18" Foreground="{StaticResource BrushCyanAccentHover}" Margin="0,0,8,0"/>
+                                <TextBlock Text="Multi-VHDX Storage Disaggregation Matrix" Foreground="{StaticResource BrushTextWhite}" FontSize="16" FontWeight="Bold"/>
+                            </StackPanel>
+                            <Button Content="✕" Style="{StaticResource PowerOpBtn}" Click="BtnCloseDisaggregatedModal_Click" HorizontalAlignment="Right" Width="26" Height="26"/>
+                        </Grid>
+
+                        <TextBlock Text="Route distinct virtual hard disks to specific destination volumes (e.g., CSV Volume 1 for OS, Volume 2 for Data)." Foreground="{StaticResource BrushTextSecondary}" FontSize="12" Margin="0,0,0,14"/>
+
+                        <ListBox x:Name="DisaggregatedDisksListBox" Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" MaxHeight="300" Margin="0,0,0,20">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="0,0,0,1" Padding="12,10">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="220"/>
+                                                <ColumnDefinition Width="80"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="{Binding FileName}" Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding ControllerType}" Foreground="{StaticResource BrushTextMuted}" FontSize="10"/>
+                                            </StackPanel>
+
+                                            <TextBlock Grid.Column="1" Text="{Binding SizeFormatted}" Foreground="{StaticResource BrushCyanAccentHover}" FontSize="12" VerticalAlignment="Center"/>
+
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="TARGET DIRECTORY PATH" Foreground="{StaticResource BrushSuccess}" FontSize="9" FontWeight="Bold"/>
+                                                <TextBox Text="{Binding TargetDirectoryPath, UpdateSourceTrigger=PropertyChanged}" Tag="e.g. C:\ClusterStorage\Volume2\VMs" Style="{StaticResource EnterpriseInputTextBox}" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <Grid>
+                            <Button Content="Cancel" Style="{StaticResource SlateOutlineBtn}" Click="BtnCloseDisaggregatedModal_Click" HorizontalAlignment="Left" Width="120"/>
+                            <Button Content="Save Storage Routing" Style="{StaticResource CyanActionBtn}" Click="BtnApplyDisaggregatedPaths_Click" HorizontalAlignment="Right" Width="180"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </Border>
+
+            <!-- MODAL: MAINTENANCE WINDOW SCHEDULER -->
+            <Border x:Name="SchedulerModal" Visibility="Collapsed" Grid.RowSpan="3" Background="#E504080F" CornerRadius="12" Padding="30">
+                <Border Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Width="640" VerticalAlignment="Center" Padding="24" Effect="{StaticResource EffectModalShadow}">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,16">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="⏱" FontSize="18" Foreground="{StaticResource BrushSuccess}" Margin="0,0,8,0"/>
+                                <TextBlock Text="Maintenance Window &amp; Batch Scheduler" Foreground="{StaticResource BrushTextWhite}" FontSize="16" FontWeight="Bold"/>
+                            </StackPanel>
+                            <Button Content="✕" Style="{StaticResource PowerOpBtn}" Click="BtnCloseSchedulerModal_Click" HorizontalAlignment="Right" Width="26" Height="26"/>
+                        </Grid>
+
+                        <!-- Batch Name -->
+                        <TextBlock Text="BATCH NAME" Foreground="{StaticResource BrushTextSecondary}" FontSize="10" FontWeight="Bold" Margin="0,0,0,4"/>
+                        <TextBox x:Name="TxtScheduleBatchName" Text="Datacenter Evacuation Window" Style="{StaticResource EnterpriseInputTextBox}" Margin="0,0,0,14"/>
+
+                        <!-- Execution Time Picker -->
+                        <TextBlock Text="SCHEDULED TIME (UTC / LOCAL)" Foreground="{StaticResource BrushTextSecondary}" FontSize="10" FontWeight="Bold" Margin="0,0,0,4"/>
+                        <DatePicker x:Name="DpScheduleDate" Margin="0,0,0,8" Background="#08111D" Foreground="{StaticResource BrushTextWhite}"/>
+                        <TextBox x:Name="TxtScheduleTime" Text="02:00" Tag="HH:mm (24hr)" Style="{StaticResource EnterpriseInputTextBox}" Margin="0,0,0,14"/>
+
+                        <!-- Concurrency Throttling -->
+                        <Grid Margin="0,0,0,14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="100"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="CONCURRENCY LIMIT (SEMAPHORE)" Foreground="{StaticResource BrushTextSecondary}" FontSize="10" FontWeight="Bold"/>
+                                <TextBlock Text="Max parallel live migrations to prevent NIC/IOPS saturation." Foreground="{StaticResource BrushTextMuted}" FontSize="10" Margin="0,2,0,0"/>
+                            </StackPanel>
+                            <TextBox Grid.Column="1" x:Name="TxtScheduleConcurrency" Text="2" Style="{StaticResource EnterpriseInputTextBox}" HorizontalContentAlignment="Center"/>
+                        </Grid>
+
+                        <!-- Post-Flight Auto-Rollback -->
+                        <Border Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,20">
+                            <CheckBox x:Name="ChkAutoRollback" IsChecked="True">
+                                <StackPanel Margin="6,0,0,0">
+                                    <TextBlock Text="Auto-Rollback on Guest Heartbeat Failure" Foreground="{StaticResource BrushTextWhite}" FontWeight="SemiBold" FontSize="12"/>
+                                    <TextBlock Text="Automatically migrates workload back to source if guest OS fails to report healthy heartbeat within 180s." Foreground="{StaticResource BrushTextMuted}" FontSize="10" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </CheckBox>
+                        </Border>
+
+                        <Grid>
+                            <Button Content="Cancel" Style="{StaticResource SlateOutlineBtn}" Click="BtnCloseSchedulerModal_Click" HorizontalAlignment="Left" Width="120"/>
+                            <Button Content="Enqueue Scheduled Batch" Style="{StaticResource CyanActionBtn}" Click="BtnConfirmScheduleBatch_Click" HorizontalAlignment="Right" Width="200"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </Border>
 
             <!-- MODAL: ENTERPRISE VM HARDWARE TUNER -->
             <Border x:Name="VmHardwareTunerModal" Visibility="Collapsed" Background="#E504080F" CornerRadius="12" Padding="30">
@@ -1568,6 +1670,58 @@
                         <Grid>
                             <Button Content="Close" Style="{StaticResource SlateOutlineBtn}" Click="BtnCloseCheckpointModal_Click" HorizontalAlignment="Left" Width="120"/>
                             <Button x:Name="BtnCreateNewSnapshot" Content="+ Create Point-in-Time Checkpoint" Style="{StaticResource CyanActionBtn}" Click="BtnCreateNewSnapshot_Click" HorizontalAlignment="Right" Width="250"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </Border>
+
+            <!-- MODAL: V2V MULTI-DISK NVMe SSD vs HDD STORAGE TIERING MATRIX -->
+            <Border x:Name="V2VMultiDiskTieringModal" Visibility="Collapsed" Background="#E504080F" CornerRadius="12" Padding="30">
+                <Border Background="{StaticResource BrushCardGradient}" BorderBrush="{StaticResource BrushCardBorderGlow}" BorderThickness="1" CornerRadius="12" Width="820" VerticalAlignment="Center" Padding="24" Effect="{StaticResource EffectModalShadow}">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,16">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="💽" FontSize="18" Foreground="{StaticResource BrushCyanAccentHover}" Margin="0,0,8,0"/>
+                                <TextBlock Text="V2V Multi-Disk Storage Tiering Matrix (NVMe SSD vs. HDD)" Foreground="{StaticResource BrushTextWhite}" FontSize="16" FontWeight="Bold"/>
+                            </StackPanel>
+                            <Button Content="✕" Style="{StaticResource PowerOpBtn}" Click="BtnCloseV2VTieringModal_Click" HorizontalAlignment="Right" Width="26" Height="26"/>
+                        </Grid>
+
+                        <TextBlock Text="Route virtual hard disks to specific destination storage pools (e.g. Boot/OS VHDX to high-speed NVMe CSV, Data VHDXs to HDD Tier)." Foreground="{StaticResource BrushTextSecondary}" FontSize="12" Margin="0,0,0,14"/>
+
+                        <ListBox x:Name="V2VDisksListBox" Background="#08111D" BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="1" MaxHeight="320" Margin="0,0,0,20" Foreground="{StaticResource BrushTextWhite}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="{StaticResource BrushCardBorder}" BorderThickness="0,0,0,1" Padding="12,10">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="220"/>
+                                                <ColumnDefinition Width="90"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="{Binding Label}" Foreground="{StaticResource BrushTextWhite}" FontWeight="Bold" FontSize="12.5"/>
+                                                <TextBlock Foreground="{StaticResource BrushCyanAccentHover}" FontSize="10" Margin="0,2,0,0">
+                                                    <Run Text="{Binding ControllerType}"/><Run Text=" "/><Run Text="{Binding ControllerNumber}"/><Run Text=":"/><Run Text="{Binding ControllerLocation}"/>
+                                                </TextBlock>
+                                            </StackPanel>
+
+                                            <TextBlock Grid.Column="1" Text="{Binding FormattedSize}" Foreground="{StaticResource BrushSuccess}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="DESTINATION STORAGE DIRECTORY" Foreground="{StaticResource BrushSuccess}" FontSize="9" FontWeight="Bold"/>
+                                                <TextBox Text="{Binding TargetStoragePath, UpdateSourceTrigger=PropertyChanged}" Tag="e.g. C:\ClusterStorage\Volume1_NVMe" Style="{StaticResource EnterpriseInputTextBox}" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <Grid>
+                            <Button Content="Cancel" Style="{StaticResource SlateOutlineBtn}" Click="BtnCloseV2VTieringModal_Click" HorizontalAlignment="Left" Width="120"/>
+                            <Button Content="Save Storage Routing" Style="{StaticResource CyanActionBtn}" Click="BtnApplyV2VTiering_Click" HorizontalAlignment="Right" Width="180"/>
                         </Grid>
                     </StackPanel>
                 </Border>

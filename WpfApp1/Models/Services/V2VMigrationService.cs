@@ -15,45 +15,26 @@ namespace WpfApp1.Services
 {
     /// <summary>
     /// Master orchestration service for VMware-to-Hyper-V (V2V) cold migrations.
-    /// Streams VMDK disks directly from ESXi datastores, converts to native VHDX,
-    /// maps BIOS/EFI firmware parity, and provisions Hyper-V workloads over WinRM.
+    /// Automates PowerCLI Export-VApp (snapshot merging), Tools\qemu-img.exe disk conversion,
+    /// network UNC streaming, and remote Hyper-V VM provisioning over WinRM.
     /// </summary>
     public sealed class V2VMigrationService
     {
-        private static readonly string[] StarWindDefaultPaths = new[]
-        {
-            @"C:\Program Files\StarWind Software\StarWind V2V Converter\V2V_ConverterCmd.exe",
-            @"C:\Program Files (x86)\StarWind Software\StarWind V2V Converter\V2V_ConverterCmd.exe"
-        };
-
-        /// <summary>
-        /// Checks if StarWind V2V Converter CLI is installed on this workstation.
-        /// </summary>
-        public static bool IsStarWindInstalled(out string? cliPath)
-        {
-            foreach (var path in StarWindDefaultPaths)
-            {
-                if (File.Exists(path))
-                {
-                    cliPath = path;
-                    return true;
-                }
-            }
-            cliPath = null;
-            return false;
-        }
-
-        /// <summary>
-        /// Checks if open-source qemu-img.exe is available in the application directory or system PATH.
-        /// </summary>
         public static bool IsQemuImgAvailable(out string? qemuPath)
         {
             var appDir = AppDomain.CurrentDomain.BaseDirectory;
-            var localToolsPath = Path.Combine(appDir, "tools", "qemu-img.exe");
 
-            if (File.Exists(localToolsPath))
+            var toolsPath = Path.Combine(appDir, "Tools", "qemu-img.exe");
+            if (File.Exists(toolsPath))
             {
-                qemuPath = localToolsPath;
+                qemuPath = toolsPath;
+                return true;
+            }
+
+            var lowercaseToolsPath = Path.Combine(appDir, "tools", "qemu-img.exe");
+            if (File.Exists(lowercaseToolsPath))
+            {
+                qemuPath = lowercaseToolsPath;
                 return true;
             }
 
@@ -69,11 +50,14 @@ namespace WpfApp1.Services
         }
 
         /// <summary>
-        /// Executes the complete 4-step V2V migration:
-        /// 1. Power off VMware VM via vCenter API (if running)
-        /// 2. Stream & convert VMDK directly from ESXi datastore to Hyper-V VHDX
-        /// 3. Provision matching Generation 1/2 VM on target Hyper-V node
-        /// 4. Power on new VM on Hyper-V
+        /// Fully automated end-to-end V2V migration pipeline:
+        /// 0. Audit destination Hyper-V node for name collisions before staging
+        /// 1. Power off VMware VM via vCenter API (if powered on)
+        /// 2. Export and merge all active snapshots via PowerCLI Export-VApp
+        /// 3. Convert merged VMDK to dynamic VHDX using Tools\qemu-img.exe directly to the Hyper-V target
+        /// 4. Reclaim local staging buffer
+        /// 5. Provision matching Generation 1 (BIOS) or Generation 2 (UEFI) VM on Hyper-V
+        /// 6. Power on workload on Hyper-V
         /// </summary>
         public static async Task ExecuteV2VMigrationAsync(
             V2VMigrationJob job,
@@ -90,12 +74,28 @@ namespace WpfApp1.Services
             job.Status = V2VMigrationStatus.ExportingVmdk;
             job.StartTime = DateTime.Now;
 
-            string? stagingFolder = null;
+            var stagingBase = Path.Combine(Path.GetTempPath(), "WinMigrate_V2V_Staging");
+            var stagingVmFolder = Path.Combine(stagingBase, sourceVm.Name);
 
             try
             {
-                logger.Report($"[V2V] Commencing Native V2V Migration for '{sourceVm.Name}' (vCenter ➔ Hyper-V '{targetHyperVHost}')...");
-                job.AppendLog($"Initiated V2V migration pipeline for {sourceVm.Name}.");
+                logger.Report($"[V2V] Commencing Automated V2V Migration for '{sourceVm.Name}' (vCenter ➔ Hyper-V '{targetHyperVHost}')...");
+                job.AppendLog($"Initiated automated V2V pipeline for {sourceVm.Name}.");
+
+                // ---------------------------------------------------------
+                // PHASE 0: PRE-FLIGHT NAME COLLISION CHECK
+                // ---------------------------------------------------------
+                job.CurrentStep = "Verifying target Hyper-V host & name collision";
+                logger.Report($"[PRE-FLIGHT] Auditing target node '{targetHyperVHost}' for collision with workload '{sourceVm.Name}'...");
+
+                var vmAlreadyExists = await CheckVmExistsAsync(targetHyperVHost, sourceVm.Name, hyperVUser, hyperVPass, cancellationToken);
+                if (vmAlreadyExists)
+                {
+                    var collisionErr = $"Pre-flight check failed: A Virtual Machine named '{sourceVm.Name}' already exists on target Hyper-V host '{targetHyperVHost}'. Rename the VM or remove the existing instance before migrating.";
+                    logger.Report($"[PRE-FLIGHT ERROR] {collisionErr}");
+                    throw new InvalidOperationException(collisionErr);
+                }
+                logger.Report($"[PRE-FLIGHT PASSED] Node '{targetHyperVHost}' is clear. No name collision detected.");
 
                 // ---------------------------------------------------------
                 // PHASE 1: POWER OFF VMWARE WORKLOAD
@@ -104,7 +104,7 @@ namespace WpfApp1.Services
                 {
                     job.CurrentStep = "Shutting down VMware workload";
                     logger.Report($"[vCENTER] Powering off '{sourceVm.Name}' via vSphere API...");
-                    job.AppendLog("Requesting graceful guest shutdown / power-off via vCenter API.");
+                    job.AppendLog("Requesting guest power-off via vCenter API.");
 
                     try
                     {
@@ -114,116 +114,198 @@ namespace WpfApp1.Services
                     }
                     catch (Exception ex)
                     {
-                        logger.Report($"[WARN] Could not power off VM via API (might already be stopped): {ex.Message}");
+                        logger.Report($"[WARN] Notice powering off VM: {ex.Message}");
                     }
                 }
 
                 // ---------------------------------------------------------
-                // PHASE 2: DISK STREAMING & CONVERSION (VMDK ➔ VHDX)
+                // PHASE 2: POWERCLI EXPORT-VAPP (MERGES ALL SNAPSHOTS)
+                // ---------------------------------------------------------
+                job.CurrentStep = "Exporting VM & Merging Snapshots (PowerCLI)";
+                logger.Report($"[EXPORT] Exporting VMDK and merging snapshot chain via PowerCLI Export-VApp...");
+                job.AppendLog("Executing PowerCLI Export-VApp to merge snapshots on the fly.");
+
+                if (Directory.Exists(stagingVmFolder))
+                {
+                    try { Directory.Delete(stagingVmFolder, true); } catch { }
+                }
+                if (!Directory.Exists(stagingBase))
+                {
+                    Directory.CreateDirectory(stagingBase);
+                }
+
+                await ExportVmViaPowerCliAsync(
+                    vCenterService.ConnectedHost,
+                    vCenterService.AuthUsername,
+                    vCenterService.AuthPassword,
+                    sourceVm.Name,
+                    stagingBase,
+                    job,
+                    logger,
+                    cancellationToken);
+
+                // Locate all VMDK files produced by Export-VApp (sorted alphabetically for deterministic disk indexing)
+                var vmdkCandidates = Directory.GetFiles(stagingVmFolder, "*_disk*.vmdk", SearchOption.AllDirectories)
+                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (vmdkCandidates.Count == 0)
+                {
+                    vmdkCandidates = Directory.GetFiles(stagingVmFolder, "*.vmdk", SearchOption.AllDirectories)
+                        .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
+
+                if (vmdkCandidates.Count == 0)
+                {
+                    throw new FileNotFoundException($"Export-VApp completed but no VMDK files were found inside '{stagingVmFolder}'.");
+                }
+
+                logger.Report($"[EXPORT COMPLETE] Staged {vmdkCandidates.Count} virtual disk(s) for multi-tier conversion.");
+                job.AppendLog($"Exported {vmdkCandidates.Count} VMDK disk(s) to staging buffer.");
+
+                // ---------------------------------------------------------
+                // PHASE 3: MULTI-DISK STORAGE TIERING & QEMU-IMG CONVERSION
                 // ---------------------------------------------------------
                 job.Status = V2VMigrationStatus.ConvertingDisk;
-                job.CurrentStep = "Acquiring & Converting VMDK disk";
+                job.CurrentStep = "Converting VMDK(s) to VHDX via qemu-img";
 
-                var targetDir = Path.Combine(targetStoragePath.TrimEnd('\\'), sourceVm.Name);
-                var targetVhdxPath = Path.Combine(targetDir, $"{sourceVm.Name}_Disk0.vhdx");
-
-                logger.Report($"[V2V] Target VHDX destination: {targetVhdxPath}");
-                job.AppendLog($"Destination storage target: {targetVhdxPath}");
-
-                var disk = sourceVm.Disks.FirstOrDefault();
-                if (disk == null || string.IsNullOrWhiteSpace(disk.VmdkPath))
+                if (!IsQemuImgAvailable(out var qemuPath) || string.IsNullOrWhiteSpace(qemuPath))
                 {
-                    throw new InvalidOperationException($"Workload '{sourceVm.Name}' does not have any attached virtual disks. Re-discover vCenter VMs and try again.");
+                    throw new FileNotFoundException("qemu-img.exe was not found. Please ensure qemu-img.exe and DLLs are placed in the '\\Tools' folder.");
                 }
 
-                var sourceVmdk = disk.VmdkPath;
-                var finalSourceVmdkForConversion = sourceVmdk;
+                var cleanTargetHost = SanitizeHost(targetHyperVHost);
+                var isTargetLocal = IsLocalHost(cleanTargetHost);
+                var convertedDisks = new List<ConvertedDiskAttachment>();
+                var totalDisks = vmdkCandidates.Count;
+                var genNum = sourceVm.RecommendedHyperVGeneration == VmGeneration.Generation2 ? 2 : 1;
 
-                // 2A: Check if disk lives inside an ESXi Datastore (e.g. "[datastore1] VM/VM.vmdk")
-                if (sourceVmdk.StartsWith("["))
+                for (int i = 0; i < totalDisks; i++)
                 {
-                    var closeBracket = sourceVmdk.IndexOf(']');
-                    if (closeBracket > 1)
+                    var vmdkPath = vmdkCandidates[i];
+                    var diskInfo = i < sourceVm.Disks.Count ? sourceVm.Disks[i] : null;
+
+                    // Resolve tiering storage path: use disk-specific tier if configured, otherwise fallback to global volume
+                    var diskTargetStorage = !string.IsNullOrWhiteSpace(diskInfo?.TargetStoragePath)
+                        ? diskInfo.TargetStoragePath
+                        : targetStoragePath;
+
+                    var vhdxFileName = !string.IsNullOrWhiteSpace(diskInfo?.TargetFileName)
+                        ? diskInfo.TargetFileName
+                        : $"{sourceVm.Name}_Disk{i}.vhdx";
+
+                    if (!vhdxFileName.EndsWith(".vhdx", StringComparison.OrdinalIgnoreCase))
                     {
-                        var dsName = sourceVmdk.Substring(1, closeBracket - 1).Trim();
-                        var relPath = sourceVmdk.Substring(closeBracket + 1).Trim();
+                        vhdxFileName += ".vhdx";
+                    }
 
-                        stagingFolder = Path.Combine(Path.GetTempPath(), "WinMigrate_V2V_Staging", sourceVm.Name);
-                        logger.Report($"[DATASTORE] Streaming '{relPath}' from ESXi Datastore '{dsName}' via HTTPS...");
-                        job.AppendLog($"Streaming disk from datastore '{dsName}' to staging area...");
+                    string localOrUncTargetVhdx;
+                    string hyperVLocalVhdx;
 
-                        var streamProgress = new Progress<double>(pct =>
+                    if (isTargetLocal)
+                    {
+                        var targetDir = Path.Combine(diskTargetStorage.TrimEnd('\\'), sourceVm.Name);
+                        localOrUncTargetVhdx = Path.Combine(targetDir, vhdxFileName);
+                        hyperVLocalVhdx = localOrUncTargetVhdx;
+                    }
+                    else
+                    {
+                        if (diskTargetStorage.Length >= 2 && diskTargetStorage[1] == ':')
                         {
-                            job.ProgressPercent = Math.Clamp(pct * 0.45, 5.0, 45.0); // 5% - 45% progress
-                        });
+                            var driveLetter = diskTargetStorage[0];
+                            var pathWithoutDrive = diskTargetStorage.Substring(2).TrimStart('\\');
+                            var uncDir = $@"\\{cleanTargetHost}\{driveLetter}$\{pathWithoutDrive}\{sourceVm.Name}";
+                            localOrUncTargetVhdx = Path.Combine(uncDir, vhdxFileName);
+                        }
+                        else if (diskTargetStorage.StartsWith(@"\\"))
+                        {
+                            localOrUncTargetVhdx = Path.Combine(diskTargetStorage.TrimEnd('\\'), sourceVm.Name, vhdxFileName);
+                        }
+                        else
+                        {
+                            localOrUncTargetVhdx = Path.Combine($@"\\{cleanTargetHost}\C$\", diskTargetStorage.TrimStart('\\'), sourceVm.Name, vhdxFileName);
+                        }
 
-                        await vCenterService.StreamDatastoreDiskAsync(
-                            dsName,
-                            relPath,
-                            stagingFolder,
-                            streamProgress,
-                            logger,
-                            cancellationToken);
-
-                        finalSourceVmdkForConversion = Path.Combine(stagingFolder, Path.GetFileName(relPath));
+                        hyperVLocalVhdx = Path.Combine(diskTargetStorage.TrimEnd('\\'), sourceVm.Name, vhdxFileName);
                     }
-                }
 
-                // 2B: Execute Disk Transformation
-                var isStarWind = IsStarWindInstalled(out var starWindPath);
-                var isQemu = IsQemuImgAvailable(out var qemuPath);
+                    // Calculate controller topology:
+                    // Gen 2 (UEFI): All disks attached to SCSI Controller 0 Locations 0, 1, 2...
+                    // Gen 1 (BIOS): Disk 0 & 1 on IDE Controller 0 (Loc 0, 1), Disks 2+ on SCSI Controller 0 (Loc 0, 1...)
+                    string ctrlType;
+                    int ctrlNum = 0;
+                    int ctrlLoc;
 
-                if (isQemu && !string.IsNullOrWhiteSpace(qemuPath))
-                {
-                    logger.Report($"[ENGINE] Invoking open-source qemu-img converter (Zero StarWind Dependency)...");
-                    job.AppendLog("Converting disk using native qemu-img engine.");
-
-                    await ConvertWithQemuImgAsync(qemuPath, finalSourceVmdkForConversion, targetVhdxPath, job, logger, cancellationToken);
-                }
-                else if (isStarWind && !string.IsNullOrWhiteSpace(starWindPath))
-                {
-                    logger.Report($"[ENGINE] StarWind V2V CLI detected. Invoking CLI conversion...");
-                    job.AppendLog("Converting disk using detected StarWind V2V engine.");
-
-                    await ConvertWithStarWindAsync(starWindPath, finalSourceVmdkForConversion, targetVhdxPath, job, logger, cancellationToken);
-                }
-                else
-                {
-                    var errMsg = "Neither qemu-img.exe nor StarWind V2V Converter was found. Please place 'qemu-img.exe' in the application '\\tools' folder to enable standalone conversion.";
-                    logger.Report($"[ERROR] {errMsg}");
-                    job.AppendLog($"[FATAL] {errMsg}");
-                    throw new FileNotFoundException(errMsg);
-                }
-
-                // 2C: Cleanup Staging Storage Buffer
-                if (!string.IsNullOrWhiteSpace(stagingFolder) && Directory.Exists(stagingFolder))
-                {
-                    try
+                    if (genNum == 2)
                     {
-                        logger.Report($"[CLEANUP] Reclaiming temporary staging disk space...");
-                        Directory.Delete(stagingFolder, true);
+                        ctrlType = "SCSI";
+                        ctrlLoc = i;
                     }
-                    catch { }
+                    else
+                    {
+                        if (i < 2)
+                        {
+                            ctrlType = "IDE";
+                            ctrlLoc = i;
+                        }
+                        else
+                        {
+                            ctrlType = "SCSI";
+                            ctrlLoc = i - 2;
+                        }
+                    }
+
+                    convertedDisks.Add(new ConvertedDiskAttachment
+                    {
+                        HyperVLocalVhdxPath = hyperVLocalVhdx,
+                        ControllerType = ctrlType,
+                        ControllerNumber = ctrlNum,
+                        ControllerLocation = ctrlLoc
+                    });
+
+                    var diskSizeMb = new FileInfo(vmdkPath).Length / (1024.0 * 1024.0);
+                    logger.Report($"[QEMU] [{i + 1}/{totalDisks}] Converting '{Path.GetFileName(vmdkPath)}' ({diskSizeMb:F1} MB) ➔ '{localOrUncTargetVhdx}' [{ctrlType} {ctrlNum}:{ctrlLoc}]...");
+                    job.AppendLog($"Disk {i + 1}/{totalDisks} [{ctrlType} {ctrlNum}:{ctrlLoc}] Target: {localOrUncTargetVhdx}");
+
+                    // Granular multi-disk progress tracking between 45% and 85%
+                    var progressBase = 45.0 + (i * (40.0 / totalDisks));
+                    var progressSpan = 40.0 / totalDisks;
+
+                    await ConvertWithQemuImgAsync(qemuPath, vmdkPath, localOrUncTargetVhdx, job, progressBase, progressSpan, logger, cancellationToken);
                 }
 
                 // ---------------------------------------------------------
-                // PHASE 3: PROVISION HYPER-V VM (GEN 1 vs GEN 2)
+                // PHASE 4: CLEAN UP STAGING BUFFER
+                // ---------------------------------------------------------
+                try
+                {
+                    logger.Report($"[CLEANUP] Deleting temporary staging VMDK files to reclaim disk space...");
+                    if (Directory.Exists(stagingVmFolder))
+                    {
+                        Directory.Delete(stagingVmFolder, true);
+                    }
+                }
+                catch { }
+
+                // ---------------------------------------------------------
+                // PHASE 5: PROVISION HYPER-V VM (GEN 1 vs GEN 2 MULTI-DISK)
                 // ---------------------------------------------------------
                 job.Status = V2VMigrationStatus.ProvisioningHyperV;
                 job.CurrentStep = "Provisioning Hyper-V workload";
                 job.ProgressPercent = 90.0;
 
                 var gen = sourceVm.RecommendedHyperVGeneration;
-                logger.Report($"[HYPER-V] Provisioning new {gen} VM '{sourceVm.Name}' on node '{targetHyperVHost}' (vCPUs: {sourceVm.CpuCount}, RAM: {sourceVm.MemoryMB} MB)...");
-                job.AppendLog($"Target Hyper-V architecture selected: {gen} (Firmware parity: {sourceVm.Firmware}).");
+                logger.Report($"[HYPER-V] Provisioning {gen} VM '{sourceVm.Name}' on node '{cleanTargetHost}' (vCPUs: {sourceVm.CpuCount}, RAM: {sourceVm.MemoryMB} MB, Disks: {convertedDisks.Count})...");
+                job.AppendLog($"Target Hyper-V architecture: {gen} (Firmware parity: {sourceVm.Firmware}). Attaching {convertedDisks.Count} VHDX disk(s).");
 
                 await ProvisionHyperVVmAsync(
-                    targetHyperVHost,
+                    cleanTargetHost,
                     sourceVm.Name,
                     gen,
                     sourceVm.CpuCount,
                     sourceVm.MemoryMB,
-                    targetVhdxPath,
+                    convertedDisks,
                     targetSwitchName,
                     hyperVUser,
                     hyperVPass,
@@ -231,15 +313,27 @@ namespace WpfApp1.Services
                     cancellationToken);
 
                 // ---------------------------------------------------------
-                // PHASE 4: COMPLETION
+                // PHASE 6: POWER ON WORKLOAD ON HYPER-V
                 // ---------------------------------------------------------
+                logger.Report($"[HYPER-V] Starting converted workload '{sourceVm.Name}' on '{cleanTargetHost}'...");
+                try
+                {
+                    await StartHyperVVmAsync(cleanTargetHost, sourceVm.Name, hyperVUser, hyperVPass, cancellationToken);
+                    logger.Report($"[HYPER-V] Workload '{sourceVm.Name}' is powered on and booting.");
+                    job.AppendLog("Workload started on Hyper-V.");
+                }
+                catch (Exception pEx)
+                {
+                    logger.Report($"[WARN] Notice powering on VM on Hyper-V: {pEx.Message}");
+                }
+
                 job.Status = V2VMigrationStatus.Completed;
                 job.CurrentStep = "Completed Successfully";
                 job.ProgressPercent = 100.0;
                 job.EndTime = DateTime.Now;
 
-                logger.Report($"[SUCCESS] V2V Migration completed! Workload '{sourceVm.Name}' is ready on Hyper-V '{targetHyperVHost}'.");
-                job.AppendLog("V2V pipeline concluded with 100% success.");
+                logger.Report($"[SUCCESS] V2V Migration completed! Workload '{sourceVm.Name}' is live on Hyper-V '{cleanTargetHost}'.");
+                job.AppendLog("V2V migration finished with 100% success.");
             }
             catch (Exception ex)
             {
@@ -249,20 +343,193 @@ namespace WpfApp1.Services
                 logger.Report($"[V2V ERROR] {ex.Message}");
                 job.AppendLog($"[EXCEPTION] {ex.Message}\n{ex.StackTrace}");
 
-                if (!string.IsNullOrWhiteSpace(stagingFolder) && Directory.Exists(stagingFolder))
+                try
                 {
-                    try { Directory.Delete(stagingFolder, true); } catch { }
+                    if (Directory.Exists(stagingVmFolder)) Directory.Delete(stagingVmFolder, true);
                 }
+                catch { }
 
                 throw;
             }
         }
 
+        /// <summary>
+        /// Audits target Hyper-V node over WinRM to verify if a workload with the same name already exists.
+        /// Prevents expensive disk downloads and conversions from failing at registration time.
+        /// </summary>
+        public static async Task<bool> CheckVmExistsAsync(
+             string? host,
+             string? vmName,
+             string? username = null,
+             string? password = null,
+             CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(vmName))
+            {
+                return false;
+            }
+
+            return await Task.Run(() =>
+            {
+                Runspace? runspace = null;
+                PowerShell? ps = null;
+                try
+                {
+                    var cleanHost = SanitizeHost(host);
+                    var isLocal = IsLocalHost(cleanHost);
+
+                    runspace = CreateRunspace(cleanHost, username, password, isLocal);
+                    runspace.Open();
+
+                    ps = PowerShell.Create();
+                    ps.Runspace = runspace;
+
+                    var safeVmName = vmName.Replace("'", "''");
+                    ps.AddScript($@"
+                        Import-Module Hyper-V -ErrorAction SilentlyContinue
+                        $existing = Get-VM -Name '{safeVmName}' -ErrorAction SilentlyContinue
+                        [bool]($existing -ne $null)
+                    ");
+
+                    var results = ps.Invoke();
+                    if (results.Count > 0 && results[0]?.BaseObject is bool exists)
+                    {
+                        return exists;
+                    }
+
+                    return false;
+                }
+                catch
+                {
+                    // Fail safe on unreachable host, auth error, or timeout — never crash the UI
+                    return false;
+                }
+                finally
+                {
+                    try { ps?.Dispose(); } catch { }
+                    try { runspace?.Dispose(); } catch { }
+                }
+            }, ct);
+        }
+
+        /// <summary>
+        /// Executes PowerCLI Export-VApp with a live background file-watcher monitoring downloaded megabytes and MB/s throughput.
+        /// </summary>
+        private static async Task ExportVmViaPowerCliAsync(
+            string vCenterHost,
+            string vCenterUser,
+            string vCenterPass,
+            string vmName,
+            string destinationFolder,
+            V2VMigrationJob job,
+            IProgress<string> logger,
+            CancellationToken ct)
+        {
+            await Task.Run(async () =>
+            {
+                var safeHost = vCenterHost.Replace("'", "''");
+                var safeUser = vCenterUser.Replace("'", "''");
+                var safePass = vCenterPass.Replace("'", "''");
+                var safeVmName = vmName.Replace("'", "''");
+                var safeDest = destinationFolder.Replace("'", "''");
+
+                var scriptContent = new StringBuilder();
+                scriptContent.AppendLine("$ErrorActionPreference = 'Continue';");
+                scriptContent.AppendLine("Add-Type -AssemblyName 'System.Core', 'Microsoft.CSharp' -ErrorAction SilentlyContinue;");
+                scriptContent.AppendLine("Import-Module VMware.VimAutomation.Core -ErrorAction SilentlyContinue;");
+                scriptContent.AppendLine("Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$false -ErrorAction SilentlyContinue | Out-Null;");
+                scriptContent.AppendLine("$ErrorActionPreference = 'Stop';");
+                scriptContent.AppendLine($"$vc = Connect-VIServer -Server '{safeHost}' -User '{safeUser}' -Password '{safePass}' -ErrorAction Stop;");
+                scriptContent.AppendLine($"$vm = Get-VM -Name '{safeVmName}' -ErrorAction Stop;");
+                scriptContent.AppendLine($"Export-VApp -VM $vm -Destination '{safeDest}' -Format OVF -Force -ErrorAction Stop;");
+                scriptContent.AppendLine("Disconnect-VIServer -Server $vc -Confirm:$false -ErrorAction SilentlyContinue;");
+
+                var scriptPath = Path.Combine(destinationFolder, "Export_Workload.ps1");
+                File.WriteAllText(scriptPath, scriptContent.ToString(), Encoding.UTF8);
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "powershell.exe",
+                    Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{scriptPath}\"",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var proc = new Process { StartInfo = psi };
+                var errBuilder = new StringBuilder();
+
+                proc.OutputDataReceived += (s, e) =>
+                {
+                    if (!string.IsNullOrWhiteSpace(e.Data))
+                    {
+                        logger.Report($"[PowerCLI] {e.Data.Trim()}");
+                    }
+                };
+
+                proc.ErrorDataReceived += (s, e) =>
+                {
+                    if (!string.IsNullOrWhiteSpace(e.Data))
+                    {
+                        errBuilder.AppendLine(e.Data);
+                    }
+                };
+
+                proc.Start();
+                proc.BeginOutputReadLine();
+                proc.BeginErrorReadLine();
+
+                // Live Background File Monitor: tracks bytes landing on disk in real-time
+                var vmStagingDir = Path.Combine(destinationFolder, vmName);
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var lastSize = 0L;
+
+                while (!proc.HasExited)
+                {
+                    await Task.Delay(1000, ct);
+
+                    try
+                    {
+                        if (Directory.Exists(vmStagingDir))
+                        {
+                            var files = Directory.GetFiles(vmStagingDir, "*.*", SearchOption.AllDirectories);
+                            var totalBytes = files.Sum(f => new FileInfo(f).Length);
+                            var totalMb = totalBytes / (1024.0 * 1024.0);
+
+                            var deltaBytes = totalBytes - lastSize;
+                            lastSize = totalBytes;
+                            var speedMbps = (deltaBytes / (1024.0 * 1024.0)); // MB per second
+
+                            // Advance progress bar smoothly between 5% and 45%
+                            job.ProgressPercent = Math.Clamp(5.0 + (totalMb / 150.0), 5.0, 45.0);
+                            logger.Report($"[DOWNLOADING] Staged: {totalMb:F1} MB @ {speedMbps:F1} MB/s");
+                        }
+                    }
+                    catch { }
+                }
+
+                sw.Stop();
+
+                if (proc.ExitCode != 0)
+                {
+                    throw new InvalidOperationException($"PowerCLI Export-VApp failed (Exit Code {proc.ExitCode}):\n{errBuilder}");
+                }
+
+                try { File.Delete(scriptPath); } catch { }
+            }, ct);
+        }
+
+        /// <summary>
+        /// Converts the staged VMDK to dynamic VHDX using Tools\qemu-img.exe with segmented progress scaling.
+        /// </summary>
         private static async Task ConvertWithQemuImgAsync(
             string qemuPath,
-            string sourceVmdk,
+            string sourceFile,
             string destVhdx,
             V2VMigrationJob job,
+            double progressBase,
+            double progressSpan,
             IProgress<string> logger,
             CancellationToken ct)
         {
@@ -274,36 +541,14 @@ namespace WpfApp1.Services
                     Directory.CreateDirectory(targetDir);
                 }
 
-                // 1. Locate actual source disk file (Handle both descriptor .vmdk and binary -flat.vmdk)
-                var actualSource = sourceVmdk;
-                var isRawFormat = false;
-
-                if (!File.Exists(actualSource))
+                if (!File.Exists(sourceFile))
                 {
-                    var dir = Path.GetDirectoryName(actualSource) ?? string.Empty;
-                    var baseName = Path.GetFileNameWithoutExtension(actualSource);
-                    var flatPath = Path.Combine(dir, $"{baseName}-flat.vmdk");
-
-                    if (File.Exists(flatPath))
-                    {
-                        actualSource = flatPath;
-                        isRawFormat = true; // -flat.vmdk is a raw binary disk extent
-                    }
-                    else
-                    {
-                        throw new FileNotFoundException($"Source disk file not found for conversion: {sourceVmdk}");
-                    }
-                }
-                else if (actualSource.EndsWith("-flat.vmdk", StringComparison.OrdinalIgnoreCase))
-                {
-                    isRawFormat = true;
+                    throw new FileNotFoundException($"Source VMDK file not found for conversion: {sourceFile}");
                 }
 
-                // 2. Clean QEMU arguments (Compatible with all 2015-2026 builds; VHDX is dynamic by default)
-                var formatFlag = isRawFormat ? "-f raw" : "-f vmdk";
-                var qemuArgs = $"convert -p {formatFlag} -O vhdx \"{actualSource}\" \"{destVhdx}\"";
-
-                logger.Report($"[qemu-img EXEC] {qemuArgs}");
+                // VHDX is dynamic by default in QEMU
+                var qemuArgs = $"convert -p -f vmdk -O vhdx \"{sourceFile}\" \"{destVhdx}\"";
+                logger.Report($"[qemu-img] Executing: {qemuPath} {qemuArgs}");
 
                 var psi = new ProcessStartInfo
                 {
@@ -316,8 +561,8 @@ namespace WpfApp1.Services
                 };
 
                 var errorLog = new StringBuilder();
-
                 using var proc = new Process { StartInfo = psi };
+
                 proc.ErrorDataReceived += (s, e) =>
                 {
                     if (string.IsNullOrWhiteSpace(e.Data)) return;
@@ -327,7 +572,7 @@ namespace WpfApp1.Services
                     var match = Regex.Match(e.Data, @"\(\s*([0-9\.]+)/100%\s*\)");
                     if (match.Success && double.TryParse(match.Groups[1].Value, out var pct))
                     {
-                        job.ProgressPercent = Math.Clamp(45.0 + (pct * 0.40), 45.0, 85.0);
+                        job.ProgressPercent = Math.Clamp(progressBase + ((pct / 100.0) * progressSpan), 5.0, 89.0);
                     }
                     logger.Report($"[qemu-img] {e.Data.Trim()}");
                 };
@@ -342,65 +587,21 @@ namespace WpfApp1.Services
                     throw new InvalidOperationException($"qemu-img conversion failed (Exit Code {proc.ExitCode}):\n{details}");
                 }
 
-                logger.Report($"[qemu-img] VHDX disk image generated successfully: {destVhdx}");
+                logger.Report($"[qemu-img] Converted VHDX generated: {destVhdx}");
             }, ct);
         }
 
-        private static async Task ConvertWithStarWindAsync(
-            string starWindPath,
-            string sourceVmdk,
-            string destVhdx,
-            V2VMigrationJob job,
-            IProgress<string> logger,
-            CancellationToken ct)
-        {
-            await Task.Run(() =>
-            {
-                var targetDir = Path.GetDirectoryName(destVhdx);
-                if (!string.IsNullOrWhiteSpace(targetDir) && !Directory.Exists(targetDir))
-                {
-                    Directory.CreateDirectory(targetDir);
-                }
-
-                var psi = new ProcessStartInfo
-                {
-                    FileName = starWindPath,
-                    Arguments = $"-i vmdk -o vhdx -src_file \"{sourceVmdk}\" -dst_file \"{destVhdx}\" -dst_type dynamic",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-
-                using var proc = new Process { StartInfo = psi };
-                proc.OutputDataReceived += (s, e) =>
-                {
-                    if (!string.IsNullOrWhiteSpace(e.Data))
-                    {
-                        logger.Report($"[StarWind] {e.Data.Trim()}");
-                    }
-                };
-
-                proc.Start();
-                proc.BeginOutputReadLine();
-                proc.WaitForExit();
-
-                if (proc.ExitCode != 0)
-                {
-                    throw new InvalidOperationException($"StarWind V2V Converter exited with code {proc.ExitCode}.");
-                }
-
-                logger.Report($"[StarWind] Disk conversion completed successfully.");
-            }, ct);
-        }
-
+        /// <summary>
+        /// Provisions the converted workload on the destination Hyper-V node via WinRM.
+        /// Attaches all multi-disk VHDX files to the appropriate IDE/SCSI controllers and locations.
+        /// </summary>
         private static async Task ProvisionHyperVVmAsync(
             string host,
             string vmName,
             VmGeneration generation,
             int cpuCount,
             long memoryMb,
-            string vhdxPath,
+            List<ConvertedDiskAttachment> attachedDisks,
             string switchName,
             string? username,
             string? password,
@@ -419,10 +620,29 @@ namespace WpfApp1.Services
                 ps.Runspace = runspace;
 
                 var safeVmName = vmName.Replace("'", "''");
-                var safeVhdx = vhdxPath.Replace("'", "''");
                 var safeSwitch = switchName.Replace("'", "''");
                 var genNum = generation == VmGeneration.Generation2 ? 2 : 1;
                 var memBytes = memoryMb * 1024L * 1024L;
+
+                // Build multi-disk attachment script block
+                var diskAttachmentBuilder = new StringBuilder();
+                if (genNum == 1)
+                {
+                    // Ensure SCSI Controller 0 exists for secondary disks on Gen 1
+                    diskAttachmentBuilder.AppendLine(@"
+                        $scsiCtrl = Get-VMScsiController -VM $vm -ErrorAction SilentlyContinue
+                        if (-not $scsiCtrl) {
+                            Add-VMScsiController -VM $vm -ErrorAction SilentlyContinue
+                        }
+                    ");
+                }
+
+                foreach (var d in attachedDisks)
+                {
+                    var safePath = d.HyperVLocalVhdxPath.Replace("'", "''");
+                    diskAttachmentBuilder.AppendLine(
+                        $"Add-VMHardDiskDrive -VM $vm -ControllerType {d.ControllerType} -ControllerNumber {d.ControllerNumber} -ControllerLocation {d.ControllerLocation} -Path '{safePath}' -ErrorAction Stop");
+                }
 
                 var script = $@"
                     Import-Module Hyper-V -ErrorAction SilentlyContinue
@@ -430,21 +650,22 @@ namespace WpfApp1.Services
                     # 1. Verify VM does not already exist
                     $existing = Get-VM -Name '{safeVmName}' -ErrorAction SilentlyContinue
                     if ($existing) {{
-                        throw 'A Virtual Machine named \'{safeVmName}\' already exists on target node {cleanHost}.'
+                        throw ""A Virtual Machine named '{safeVmName}' already exists on target node {cleanHost}.""
                     }}
 
                     # 2. Provision Virtual Machine Shell
                     $vm = New-VM -Name '{safeVmName}' -Generation {genNum} -MemoryStartupBytes {memBytes} -ErrorAction Stop
 
                     # 3. Configure vCPU Cores & Enable Processor Compatibility
-                    Set-VMProcessor -VM $vm -Count {cpuCount} -CompatibilityForMigrationMode Enabled -ErrorAction SilentlyContinue
-
-                    # 4. Attach Converted VHDX Disk (SCSI for Gen2, IDE for Gen1)
-                    if ({genNum} -eq 2) {{
-                        Add-VMHardDiskDrive -VM $vm -ControllerType SCSI -ControllerNumber 0 -ControllerLocation 0 -Path '{safeVhdx}' -ErrorAction Stop
-                    }} else {{
-                        Add-VMHardDiskDrive -VM $vm -ControllerType IDE -ControllerNumber 0 -ControllerLocation 0 -Path '{safeVhdx}' -ErrorAction Stop
+                    Set-VMProcessor -VM $vm -Count {cpuCount} -ErrorAction SilentlyContinue
+                    try {{
+                        Set-VMProcessor -VM $vm -CompatibilityForMigrationMode MinimumFeatureSet -ErrorAction SilentlyContinue
+                    }} catch {{
+                        Set-VMProcessor -VM $vm -CompatibilityForOlderOperatingSystemsEnabled $true -ErrorAction SilentlyContinue
                     }}
+
+                    # 4. Attach Multi-Disk VHDX Storage Array
+                    {diskAttachmentBuilder}
 
                     # 5. Connect Virtual Switch
                     if (-not [string]::IsNullOrWhiteSpace('{safeSwitch}')) {{
@@ -464,7 +685,31 @@ namespace WpfApp1.Services
                     throw new InvalidOperationException($"Failed to provision VM on Hyper-V node '{cleanHost}': {err}");
                 }
 
-                logger.Report($"[HYPER-V] Workload '{vmName}' successfully registered and wired to '{switchName}' on '{cleanHost}'.");
+                logger.Report($"[HYPER-V] Workload '{vmName}' successfully registered with {attachedDisks.Count} hard disk(s) and wired to '{switchName}' on '{cleanHost}'.");
+            }, ct);
+        }
+
+        private static async Task StartHyperVVmAsync(
+            string host,
+            string vmName,
+            string? username,
+            string? password,
+            CancellationToken ct)
+        {
+            await Task.Run(() =>
+            {
+                var cleanHost = SanitizeHost(host);
+                var isLocal = IsLocalHost(cleanHost);
+
+                using var runspace = CreateRunspace(cleanHost, username, password, isLocal);
+                runspace.Open();
+
+                using var ps = PowerShell.Create();
+                ps.Runspace = runspace;
+
+                var safeVmName = vmName.Replace("'", "''");
+                ps.AddScript($"Import-Module Hyper-V -ErrorAction SilentlyContinue; Start-VM -Name '{safeVmName}' -ErrorAction SilentlyContinue");
+                ps.Invoke();
             }, ct);
         }
 
@@ -479,6 +724,7 @@ namespace WpfApp1.Services
 
             var colonIdx = clean.IndexOf(':');
             if (colonIdx > 0 && !clean.Contains(']')) clean = clean[..colonIdx];
+
             return clean;
         }
 
@@ -516,5 +762,16 @@ namespace WpfApp1.Services
 
             return RunspaceFactory.CreateRunspace(connectionInfo);
         }
+    }
+
+    /// <summary>
+    /// Represents a converted disk ready for remote attachment to a provisioned Hyper-V guest.
+    /// </summary>
+    public sealed class ConvertedDiskAttachment
+    {
+        public string HyperVLocalVhdxPath { get; set; } = string.Empty;
+        public string ControllerType { get; set; } = "SCSI";
+        public int ControllerNumber { get; set; }
+        public int ControllerLocation { get; set; }
     }
 }

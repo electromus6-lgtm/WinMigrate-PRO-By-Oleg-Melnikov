@@ -23,12 +23,17 @@ namespace WpfApp1
         private readonly MigrationSchedulerService _schedulerService;
         private readonly DispatcherTimer _telemetryTimer;
 
-        private readonly List<VirtualMachineModel> _selectedBatchVms = []  ;
-        // Phase 2: vCenter V2V Importer State
+        private readonly List<VirtualMachineModel> _selectedBatchVms = [];
+
+        // Phase 2: vCenter V2V Importer State & Target Explorer
         private readonly vCenterDiscoveryService _vCenterService = new();
         private readonly V2VMigrationService _v2vService = new();
         private readonly ObservableCollection<VCenterVmModel> _vCenterVms = [];
+        private readonly ObservableCollection<TargetHyperVWorkloadItem> _targetHyperVVms = [];
+        private readonly ObservableCollection<StorageVolumeModel> _targetV2VVolumes = [];
         private VCenterVmModel? _selectedVCenterVm;
+        private string _targetV2VDefaultStorage = @"C:\ClusterStorage\Volume1";
+
         private HostModel? _targetHostCapacity;
         private PreFlightReport? _latestPreFlightReport;
         private VirtualMachineModel? _tuningVm;
@@ -58,7 +63,7 @@ namespace WpfApp1
             _hyperVService = new HyperVService();
             _schedulerService = new MigrationSchedulerService(_hyperVService);
 
-            // Wire up scheduler queue events
+            // Scheduler Queue Event Subscriptions
             _schedulerService.BatchStarted += OnSchedulerBatchStarted;
             _schedulerService.WorkloadFinished += OnSchedulerWorkloadFinished;
             _schedulerService.BatchFinished += OnSchedulerBatchFinished;
@@ -68,6 +73,11 @@ namespace WpfApp1
             JobsListBox.ItemsSource = _jobHistory;
             CheckpointsListBox.ItemsSource = _vmCheckpoints;
             MigrationSubnetsListBox.ItemsSource = _migrationSubnets;
+
+            // Tab 5 V2V Bindings
+            VCenterVmListBox.ItemsSource = _vCenterVms;
+            TargetHyperVVmListBox.ItemsSource = _targetHyperVVms;
+            CmbV2VStorageVolumes.ItemsSource = _targetV2VVolumes;
 
             _telemetryTimer = new DispatcherTimer
             {
@@ -90,7 +100,7 @@ namespace WpfApp1
             TxtDefaultStoragePath.Text = settings.DefaultStoragePath;
             ChkCredSsp.IsChecked = settings.EnableCredSsp;
 
-            // Load QoS & Performance Settings
+            // Load Live Migration QoS & Performance Settings
             foreach (ComboBoxItem item in CmbMigrationPerformance.Items)
             {
                 if (string.Equals(item.Content?.ToString(), settings.MigrationPerformanceOption, StringComparison.OrdinalIgnoreCase))
@@ -101,17 +111,14 @@ namespace WpfApp1
             }
             TxtMigrationBandwidthLimit.Text = settings.MigrationBandwidthLimitMbps.ToString();
 
-            // Initialize Scheduler UI
+            // Scheduler UI
             DpScheduleDate.SelectedDate = DateTime.Today;
-            // Initialize vCenter V2V Importer List & Engine Detector
-            VCenterVmListBox.ItemsSource = _vCenterVms;
-            var starWindInstalled = V2VMigrationService.IsStarWindInstalled(out var swPath);
+
+            // Detect Standalone Conversion Engine
             var qemuAvailable = V2VMigrationService.IsQemuImgAvailable(out _);
-            TxtV2VEngineStatus.Text = starWindInstalled
-                ? $"Engine: StarWind V2V CLI Detected ({swPath})"
-                : (qemuAvailable
-                    ? "Engine: Open-Source qemu-img.exe Ready"
-                    : "Engine: Neither StarWind nor qemu-img found. Place qemu-img.exe in '\\tools' folder.");
+            TxtV2VEngineStatus.Text = qemuAvailable
+                ? "Engine: Standalone qemu-img.exe Ready (Tools Folder)"
+                : "Engine Warning: qemu-img.exe missing from '\\Tools' folder.";
 
             _managedHosts.Clear();
             foreach (var h in settings.SavedHosts)
@@ -121,7 +128,7 @@ namespace WpfApp1
 
             _telemetryTimer.Start();
 
-            // CLI Deep-Linking
+            // CLI Deep-Linking Options
             var cli = App.CliOptions;
             if (!string.IsNullOrWhiteSpace(cli.SourceHost)) TxtSourceHost.Text = cli.SourceHost;
             if (!string.IsNullOrWhiteSpace(cli.SourceUser)) TxtSourceUser.Text = cli.SourceUser;
@@ -147,8 +154,6 @@ namespace WpfApp1
         private async void TelemetryTimer_Tick(object? sender, EventArgs e)
         {
             if (_isPollingActive || _isMigrationRunning) return;
-
-            // Only poll telemetry when actively viewing Tab 1 (Migration Orchestrator)
             if (NavOrchestrator.IsChecked != true) return;
 
             _isPollingActive = true;
@@ -233,7 +238,7 @@ namespace WpfApp1
 
         private void SourceVmList_PreviewMouseMove(object sender, MouseEventArgs e)
         {
-            if (e.LeftButton != MouseButtonState.Pressed || _selectedBatchVms.Count == 0) return;
+            if (e.LeftButton != MouseButtonState.Pressed || _selectedBatchVms == null || _selectedBatchVms.Count == 0) return;
 
             var currentPoint = e.GetPosition(null);
             var diff = _dragStartPoint - currentPoint;
@@ -243,7 +248,8 @@ namespace WpfApp1
             {
                 try
                 {
-                    DragDrop.DoDragDrop(SourceVmList, _selectedBatchVms, DragDropEffects.Move);
+                    var payload = _selectedBatchVms.ToList();
+                    DragDrop.DoDragDrop(SourceVmList, payload, DragDropEffects.Move);
                 }
                 catch
                 {
@@ -281,7 +287,7 @@ namespace WpfApp1
                 }
                 else
                 {
-                    MessageBox.Show($"{_selectedBatchVms.Count} workload(s) staged for batch migration. Connect and verify the Target Host to proceed.", "Batch Staged", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show($"{_selectedBatchVms.Count} workload(s) staged for live migration. Connect and verify the Target Host to proceed.", "Workloads Staged", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
         }
@@ -438,28 +444,39 @@ namespace WpfApp1
 
         private void SourceVmList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            _selectedBatchVms.Clear();
-            foreach (var item in SourceVmList.SelectedItems)
+            try
             {
-                if (item is VirtualMachineModel vm)
+                _selectedBatchVms.Clear();
+
+                if (SourceVmList?.SelectedItems != null)
                 {
-                    _selectedBatchVms.Add(vm);
+                    foreach (var item in SourceVmList.SelectedItems)
+                    {
+                        if (item is VirtualMachineModel vm)
+                        {
+                            _selectedBatchVms.Add(vm);
+                        }
+                    }
+                }
+
+                if (_selectedBatchVms.Count == 0)
+                {
+                    if (TxtPayloadStatus != null) TxtPayloadStatus.Text = "None Selected";
+                }
+                else if (_selectedBatchVms.Count == 1)
+                {
+                    var vm = _selectedBatchVms[0];
+                    if (TxtPayloadStatus != null) TxtPayloadStatus.Text = $"{vm.Name} ({vm.AssignedRamMB:N0} MB)";
+                }
+                else
+                {
+                    var totalRam = _selectedBatchVms.Sum(v => v.AssignedRamMB);
+                    if (TxtPayloadStatus != null) TxtPayloadStatus.Text = $"{_selectedBatchVms.Count} VMs Selected ({totalRam:N0} MB Total)";
                 }
             }
-
-            if (_selectedBatchVms.Count == 0)
+            catch (Exception ex)
             {
-                TxtPayloadStatus.Text = "None Selected";
-            }
-            else if (_selectedBatchVms.Count == 1)
-            {
-                var vm = _selectedBatchVms[0];
-                TxtPayloadStatus.Text = $"{vm.Name} ({vm.AssignedRamMB:N0} MB)";
-            }
-            else
-            {
-                var totalRam = _selectedBatchVms.Sum(v => v.AssignedRamMB);
-                TxtPayloadStatus.Text = $"{_selectedBatchVms.Count} VMs Selected ({totalRam:N0} MB Total)";
+                if (TxtPayloadStatus != null) TxtPayloadStatus.Text = $"Selection error: {ex.Message}";
             }
         }
 
@@ -523,7 +540,7 @@ namespace WpfApp1
             {
                 await _hyperVService.EnableProcessorCompatibilityAsync(sourceHost, vm.Name, TxtSourceUser.Text.Trim(), sPass);
                 vm.CompatibilityForMigrationModeEnabled = true;
-                MessageBox.Show($"Processor Compatibility Mode enabled for '{vm.Name}'. Cross-generation migration is now unlocked!", "CPU Compatibility Applied", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show($"Processor Compatibility Mode enabled for '{vm.Name}'. Cross-generation migration is unlocked!", "CPU Compatibility Applied", MessageBoxButton.OK, MessageBoxImage.Information);
                 CpuCompatibilityModal.Visibility = Visibility.Collapsed;
             }
             catch (Exception ex)
@@ -1218,145 +1235,6 @@ namespace WpfApp1
         }
 
         // =================================================================
-        // RUNBOOK PREVIEW & SCRIPT MODAL
-        // =================================================================
-        private void BtnPreviewScript_Click(object sender, RoutedEventArgs e)
-        {
-            if (_selectedBatchVms.Count == 0)
-            {
-                MessageBox.Show("Please select one or more VMs from the Source list first.", "No Payload Selected", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            var targetHost = TxtTargetHost.Text.Trim();
-            if (string.IsNullOrWhiteSpace(targetHost))
-            {
-                MessageBox.Show("Please specify and connect to a Target Host first.", "No Target Specified", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            var sourceHost = TxtSourceHost.Text.Trim();
-            var storagePath = TxtDefaultStoragePath.Text.Trim();
-
-            var runbook = GenerateBatchProductionRunbook(_selectedBatchVms, sourceHost, targetHost, storagePath);
-            TxtScriptPreviewCode.Text = runbook;
-            ScriptPreviewModal.Visibility = Visibility.Visible;
-        }
-
-        private void BtnCloseScriptModal_Click(object sender, RoutedEventArgs e)
-        {
-            ScriptPreviewModal.Visibility = Visibility.Collapsed;
-        }
-
-        private void BtnCopyScript_Click(object sender, RoutedEventArgs e)
-        {
-            Clipboard.SetText(TxtScriptPreviewCode.Text);
-            MessageBox.Show("Batch PowerShell Runbook copied to clipboard!", "Clipboard", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-
-        private void BtnSaveScriptFile_Click(object sender, RoutedEventArgs e)
-        {
-            var dialog = new SaveFileDialog
-            {
-                Filter = "PowerShell Script (*.ps1)|*.ps1|All Files (*.*)|*.*",
-                FileName = $"BatchMigrate_{_selectedBatchVms.Count}VMs_{DateTime.Now:yyyyMMdd_HHmm}.ps1",
-                Title = "Export Batch PowerShell Runbook"
-            };
-
-            if (dialog.ShowDialog() == true)
-            {
-                File.WriteAllText(dialog.FileName, TxtScriptPreviewCode.Text);
-                MessageBox.Show($"Batch runbook saved to:\n{dialog.FileName}", "Export Succeeded", MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-        }
-
-        private static string GenerateBatchProductionRunbook(List<VirtualMachineModel> vms, string sourceHost, string targetHost, string storagePath)
-        {
-            var storageParam = string.IsNullOrWhiteSpace(storagePath)
-                ? "-IncludeStorage"
-                : $"-DestinationStoragePath \"{storagePath}\"";
-
-            var vmListFormatted = string.Join(", ", vms.Select(v => $"'{v.Name}'"));
-
-            return $@"<#
-.SYNOPSIS
-    Automated Multi-VM Batch Live Migration Runbook
-    Lead Architect: Oleg Melnikov
-    Organization:   ElectroMU Gaming Network
-    Console:        WinMigrate Pro (ElectroMU Edition)
-
-.DESCRIPTION
-    Executes sequential Live Migration across {vms.Count} workloads with transcript logging.
-    Source Host:    {sourceHost}
-    Target Host:    {targetHost}
-    Storage:        {storagePath}
-    Payload:        {vms.Count} Virtual Machines
-    License:        MIT License (Open Source)
-#>
-
-[CmdletBinding()]
-param()
-
-$ErrorActionPreference = 'Stop'
-$timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-$logPath = ""$env:TEMP\WinMigrate_Batch_{vms.Count}VMs_$timestamp.log""
-$workloads = @({vmListFormatted})
-
-Start-Transcript -Path $logPath -Append
-
-Write-Host ""======================================================="" -ForegroundColor Cyan
-Write-Host ""  WinMigrate Pro (ElectroMU Edition): Migration Runbook"" -ForegroundColor Cyan
-Write-Host ""  Author: Oleg Melnikov (ElectroMU Gaming Network)     "" -ForegroundColor Cyan
-Write-Host ""======================================================="" -ForegroundColor Cyan
-Write-Host ""[INFO] Batch Size:      $($workloads.Count) Workloads"" -ForegroundColor Gray
-Write-Host ""[INFO] Source Host:     {sourceHost}"" -ForegroundColor Gray
-Write-Host ""[INFO] Target Host:     {targetHost}"" -ForegroundColor Gray
-Write-Host ""[INFO] Transcript Log:  $logPath"" -ForegroundColor Gray
-Write-Host """"
-
-try {{
-    if (-not (Get-Module -ListAvailable -Name Hyper-V)) {{
-        throw 'Hyper-V PowerShell Module is not installed on the executing node.'
-    }}
-    Import-Module Hyper-V -ErrorAction SilentlyContinue
-
-    Write-Host ""[PRE-FLIGHT] Verifying target compute node '{targetHost}'..."" -ForegroundColor Yellow
-    $targetNode = Get-VMHost -ComputerName '{targetHost}' -ErrorAction Stop
-    Write-Host ""[PRE-FLIGHT] Target node verified: $($targetNode.FullyQualifiedDomainName)"" -ForegroundColor Green
-    Write-Host """"
-
-    $index = 1
-    foreach ($vmName in $workloads) {{
-        Write-Host ""-------------------------------------------------------"" -ForegroundColor Cyan
-        Write-Host ""[$index/$($workloads.Count)] Relocating: $vmName"" -ForegroundColor Cyan
-        Write-Host ""-------------------------------------------------------"" -ForegroundColor Cyan
-
-        $vm = Get-VM -ComputerName '{sourceHost}' -Name $vmName
-        Write-Host ""[STATUS] State: $($vm.State) | Memory: $([Math]::Round($vm.MemoryAssigned / 1MB)) MB"" -ForegroundColor Gray
-
-        Write-Host ""[MIGRATE] Invoking Move-VM pipeline..."" -ForegroundColor Green
-        Move-VM -ComputerName '{sourceHost}' -Name $vmName -DestinationHost '{targetHost}' {storageParam} -Verbose
-
-        Write-Host ""[SUCCESS] Workload '$vmName' successfully relocated."" -ForegroundColor Green
-        Write-Host """"
-        $index++
-    }}
-
-    Write-Host ""======================================================="" -ForegroundColor Green
-    Write-Host ""  All $($workloads.Count) Workload Migrations Completed Successfully! "" -ForegroundColor Green
-    Write-Host ""======================================================="" -ForegroundColor Green
-}}
-catch {{
-    Write-Error ""[BATCH FAILED] Migration interrupted with exception: $_""
-    throw $_
-}}
-finally {{
-    Stop-Transcript
-    Write-Host ""[INFO] Batch session concluded. Review audit transcript at: $logPath"" -ForegroundColor Gray
-}}";
-        }
-
-        // =================================================================
         // PRE-FLIGHT & ENTERPRISE BATCH LIVE MIGRATION EXECUTION
         // =================================================================
         private async void BtnExecuteMigration_Click(object sender, RoutedEventArgs e)
@@ -1594,7 +1472,7 @@ finally {{
                 }
                 else
                 {
-                    TxtDoctorLogs.AppendText("[AUDIT WARNING] One or both nodes are misconfigured (e.g. CredSSP instead of Kerberos, or missing directory). Click 'Auto-Repair Both Hosts' to fix.\n");
+                    TxtDoctorLogs.AppendText("[AUDIT WARNING] One or both nodes are misconfigured. Click 'Auto-Repair Both Hosts' to fix.\n");
                 }
             }
             catch (Exception ex)
@@ -1846,7 +1724,7 @@ finally {{
                     }
                     else
                     {
-                        MessageBox.Show("Platform settings saved! (Note: CredSSP system-wide delegation requires launching Visual Studio or the App as Administrator).", "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
+                        MessageBox.Show("Platform settings saved! (Note: CredSSP system-wide delegation requires launching as Administrator).", "Settings Saved", MessageBoxButton.OK, MessageBoxImage.Information);
                     }
                 }
                 else
@@ -1880,14 +1758,13 @@ finally {{
                 MigrationPerformanceOption = perfOption,
                 MigrationBandwidthLimitMbps = bwLimit,
                 SavedHosts = [.. _managedHosts]
-
             };
 
             await SettingsService.SaveSettingsAsync(settings);
-
         }
+
         // =================================================================
-        // PHASE 2: vCENTER V2V IMPORTER ACTIONS
+        // PHASE 2: vCENTER V2V IMPORTER & TARGET WORKLOAD EXPLORER
         // =================================================================
 
         private async void BtnConnectVCenter_Click(object sender, RoutedEventArgs e)
@@ -1966,10 +1843,17 @@ finally {{
             }
 
             BtnConnectV2VTarget.IsEnabled = false;
-            BtnConnectV2VTarget.Content = "Scanning Hyper-V Node...";
+            BtnConnectV2VTarget.Content = "Interrogating Target Node...";
 
             try
             {
+                // 1. Diagnostic Ping & WinRM TCP Handshake
+                var netDiag = await NetworkDiagnosticService.TestHostConnectivityAsync(host);
+                V2VTargetNetworkBadge.Visibility = Visibility.Visible;
+                TxtV2VTargetNetworkStatus.Text = netDiag.Summary;
+                TxtV2VTargetNetworkStatus.Foreground = new BrushConverter().ConvertFromString(netDiag.HexColor) as SolidColorBrush;
+
+                // 2. Discover Target Virtual Switches
                 var switches = await _hyperVService.DiscoverVirtualSwitchesAsync(
                     host,
                     string.IsNullOrEmpty(user) ? null : user,
@@ -1981,6 +1865,8 @@ finally {{
                     CmbV2VSwitches.SelectedIndex = 0;
                 }
 
+                // 3. Discover Storage Volumes & Media Types
+                _targetV2VVolumes.Clear();
                 try
                 {
                     var volumes = await _hyperVService.DiscoverTargetStorageVolumesAsync(
@@ -1988,15 +1874,47 @@ finally {{
                         string.IsNullOrEmpty(user) ? null : user,
                         string.IsNullOrEmpty(pass) ? null : pass);
 
-                    if (volumes.Count > 0)
+                    foreach (var v in volumes) _targetV2VVolumes.Add(v);
+
+                    if (_targetV2VVolumes.Count > 0)
                     {
-                        var defaultVol = volumes.FirstOrDefault(v => v.IsCsv) ?? volumes[0];
-                        TxtV2VStoragePath.Text = defaultVol.Path;
+                        var defaultVol = _targetV2VVolumes.FirstOrDefault(v => v.IsCsv) ?? _targetV2VVolumes[0];
+                        CmbV2VStorageVolumes.SelectedItem = defaultVol;
+                        _targetV2VDefaultStorage = defaultVol.Path;
                     }
                 }
                 catch { }
 
-                MessageBox.Show($"Connected to Hyper-V host '{host}'! Discovered {switches.Count} virtual switch(es).", "Hyper-V Target Verified", MessageBoxButton.OK, MessageBoxImage.Information);
+                // 4. Discover Existing Live Hyper-V Workloads for Collision Prevention
+                var targetVms = await _hyperVService.DiscoverVirtualMachinesAsync(
+                    host,
+                    string.IsNullOrEmpty(user) ? null : user,
+                    string.IsNullOrEmpty(pass) ? null : pass);
+
+                _targetHyperVVms.Clear();
+                foreach (var tvm in targetVms)
+                {
+                    var item = new TargetHyperVWorkloadItem
+                    {
+                        Id = tvm.Id,
+                        Name = tvm.Name,
+                        Status = tvm.Status,
+                        Generation = tvm.Generation,
+                        CpuCores = tvm.CpuCores,
+                        MemoryMB = tvm.AssignedRamMB,
+                        AssignedSwitch = tvm.AssignedSwitch,
+                        DiskPaths = [.. tvm.VhdxPaths]
+                    };
+                    _targetHyperVVms.Add(item);
+                }
+
+                TxtTargetVmCount.Text = $"{_targetHyperVVms.Count} Workload(s) Active";
+                TargetV2VEmptyState.Visibility = _targetHyperVVms.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+                // Perform real-time collision audit against selected VMware VM
+                AuditTargetWorkloadCollisions();
+
+                MessageBox.Show($"Connected to Hyper-V host '{host}'!\n\nDiscovered {switches.Count} vSwitch(es), {_targetV2VVolumes.Count} Storage Pool(s), and {_targetHyperVVms.Count} resident workload(s).", "Hyper-V Target Verified", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
@@ -2005,29 +1923,140 @@ finally {{
             finally
             {
                 BtnConnectV2VTarget.IsEnabled = true;
-                BtnConnectV2VTarget.Content = "Connect & Discover Hyper-V Switches";
+                BtnConnectV2VTarget.Content = "Connect & Discover Node Capacity";
             }
         }
 
-        private void VCenterVmListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void CmbV2VStorageVolumes_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (VCenterVmListBox.SelectedItem is VCenterVmModel vm)
+            if (CmbV2VStorageVolumes.SelectedItem is StorageVolumeModel vol)
             {
-                _selectedVCenterVm = vm;
-                TxtV2VSelectedVmInfo.Text = $"Workload: {vm.Name} | vCPUs: {vm.CpuCount} | RAM: {vm.FormattedRam} | Disks: {vm.Disks.Count} ({vm.FormattedTotalStorage})";
-
-                var gen = vm.RecommendedHyperVGeneration;
-                TxtV2VFirmwareParity.Text = $"Target Generation: {gen} (Automatic Parity for VMware {vm.Firmware})";
-                TxtV2VFirmwareParity.Foreground = (SolidColorBrush)FindResource("BrushSuccess");
-            }
-            else
-            {
-                _selectedVCenterVm = null;
-                TxtV2VSelectedVmInfo.Text = "Select a VMware VM on the left to review conversion specs.";
-                TxtV2VFirmwareParity.Text = "Target Generation: Auto-detected from firmware";
+                _targetV2VDefaultStorage = vol.Path;
+                if (_selectedVCenterVm != null)
+                {
+                    foreach (var disk in _selectedVCenterVm.Disks)
+                    {
+                        if (string.IsNullOrWhiteSpace(disk.TargetStoragePath))
+                        {
+                            disk.TargetStoragePath = vol.Path;
+                        }
+                    }
+                }
             }
         }
 
+        private async void VCenterVmListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            try
+            {
+                if (VCenterVmListBox.SelectedItem is VCenterVmModel vm)
+                {
+                    _selectedVCenterVm = vm;
+                    TxtV2VSelectedVmInfo.Text = $"Workload: {vm.Name} | vCPUs: {vm.CpuCount} | RAM: {vm.FormattedRam} | Interrogating storage backplane...";
+
+                    // Deep-inspect disks on-demand
+                    if (vm.Disks.Count == 0)
+                    {
+                        await _vCenterService.InspectSingleVmDetailsAsync(vm);
+                    }
+
+                    // Populate default storage routing per disk
+                    var defaultPath = !string.IsNullOrWhiteSpace(_targetV2VDefaultStorage)
+                        ? _targetV2VDefaultStorage
+                        : @"C:\ClusterStorage\Volume1";
+
+                    for (int i = 0; i < vm.Disks.Count; i++)
+                    {
+                        var disk = vm.Disks[i];
+                        disk.IsBootDisk = (i == 0);
+                        if (string.IsNullOrWhiteSpace(disk.TargetStoragePath))
+                        {
+                            disk.TargetStoragePath = defaultPath;
+                        }
+                        if (string.IsNullOrWhiteSpace(disk.TargetFileName))
+                        {
+                            disk.TargetFileName = $"{vm.Name}_Disk{i}.vhdx";
+                        }
+                    }
+
+                    var diskCount = vm.Disks?.Count ?? 0;
+                    TxtV2VSelectedVmInfo.Text = $"Workload: {vm.Name} | vCPUs: {vm.CpuCount} | RAM: {vm.FormattedRam} | Disks: {diskCount} ({vm.FormattedTotalStorage})";
+
+                    var gen = vm.RecommendedHyperVGeneration;
+                    TxtV2VFirmwareParity.Text = $"Target Generation: {gen} (Automatic Parity for VMware {vm.Firmware})";
+
+                    // Update live collision warning across target workloads
+                    AuditTargetWorkloadCollisions();
+                }
+                else
+                {
+                    _selectedVCenterVm = null;
+                    TxtV2VSelectedVmInfo.Text = "Select a VMware VM on the left to review conversion specs.";
+                    TxtV2VFirmwareParity.Text = "Target Generation: Auto-detected from firmware";
+                    AuditTargetWorkloadCollisions();
+                }
+            }
+            catch (Exception ex)
+            {
+                TxtV2VSelectedVmInfo.Text = $"Notice: {ex.Message}";
+            }
+        }
+
+        private void AuditTargetWorkloadCollisions()
+        {
+            var selectedName = _selectedVCenterVm?.Name;
+
+            foreach (var tvm in _targetHyperVVms)
+            {
+                tvm.IsNameCollision = !string.IsNullOrWhiteSpace(selectedName) &&
+                                      tvm.Name.Equals(selectedName, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        // =================================================================
+        // MULTI-DISK NVMe SSD vs HDD STORAGE TIERING MATRIX (MODAL)
+        // =================================================================
+        private void BtnOpenV2VTieringModal_Click(object sender, RoutedEventArgs e)
+        {
+            if (_selectedVCenterVm == null)
+            {
+                MessageBox.Show("Please select a VMware VM on the left first to configure multi-disk storage tiering.", "No Workload Selected", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var defaultStorage = !string.IsNullOrWhiteSpace(_targetV2VDefaultStorage) ? _targetV2VDefaultStorage : @"C:\ClusterStorage\Volume1";
+
+            for (int i = 0; i < _selectedVCenterVm.Disks.Count; i++)
+            {
+                var d = _selectedVCenterVm.Disks[i];
+                if (string.IsNullOrWhiteSpace(d.TargetStoragePath))
+                {
+                    d.TargetStoragePath = defaultStorage;
+                }
+                if (string.IsNullOrWhiteSpace(d.TargetFileName))
+                {
+                    d.TargetFileName = $"{_selectedVCenterVm.Name}_Disk{i}.vhdx";
+                }
+            }
+
+            V2VDisksListBox.ItemsSource = _selectedVCenterVm.Disks;
+            V2VMultiDiskTieringModal.Visibility = Visibility.Visible;
+        }
+
+        private void BtnCloseV2VTieringModal_Click(object sender, RoutedEventArgs e)
+        {
+            V2VMultiDiskTieringModal.Visibility = Visibility.Collapsed;
+        }
+
+        private void BtnApplyV2VTiering_Click(object sender, RoutedEventArgs e)
+        {
+            V2VMultiDiskTieringModal.Visibility = Visibility.Collapsed;
+            MessageBox.Show($"Storage routing saved for {_selectedVCenterVm?.Disks.Count ?? 0} disk(s). Converted VHDXs will be distributed to their designated storage pools during conversion.", "Tiering Applied", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        // =================================================================
+        // V2V CONVERSION EXECUTION
+        // =================================================================
         private async void BtnExecuteV2V_Click(object sender, RoutedEventArgs e)
         {
             if (_selectedVCenterVm == null)
@@ -2037,22 +2066,37 @@ finally {{
             }
 
             var targetHost = TxtV2VTargetHost.Text.Trim();
-            var targetStorage = TxtV2VStoragePath.Text.Trim();
+            var targetStorage = !string.IsNullOrWhiteSpace(_targetV2VDefaultStorage) ? _targetV2VDefaultStorage : @"C:\ClusterStorage\Volume1";
             var targetSwitch = CmbV2VSwitches.SelectedItem?.ToString() ?? string.Empty;
 
-            if (string.IsNullOrWhiteSpace(targetHost) || string.IsNullOrWhiteSpace(targetStorage))
+            if (string.IsNullOrWhiteSpace(targetHost))
             {
-                MessageBox.Show("Please specify both a target Hyper-V host and destination CSV/volume path.", "Target Specification Required", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("Please specify and connect to a target Hyper-V host.", "Target Specification Required", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
+            }
+
+            // Check if any target VM matches the source VM name (Instant Collision Gate)
+            if (_targetHyperVVms.Any(tvm => tvm.Name.Equals(_selectedVCenterVm.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                var proceed = MessageBox.Show(
+                    $"WARNING: A Virtual Machine named '{_selectedVCenterVm.Name}' is already registered on Hyper-V host '{targetHost}'.\n\n" +
+                    "Live V2V conversion cannot overwrite an existing Hyper-V VM.\n\n" +
+                    "Do you want to proceed anyway and let the Phase 0 Gatekeeper perform a live WinRM re-verification?",
+                    "Name Collision Detected",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+
+                if (proceed != MessageBoxResult.Yes) return;
             }
 
             var confirm = MessageBox.Show(
                 $"Initiate cold V2V conversion for '{_selectedVCenterVm.Name}'?\n\n" +
                 $"Source: VMware vCenter ({TxtVCenterHost.Text.Trim()})\n" +
                 $"Target: Hyper-V ({targetHost})\n" +
-                $"Storage: {targetStorage}\n" +
+                $"Default Pool: {targetStorage}\n" +
+                $"Disks: {_selectedVCenterVm.Disks.Count} Virtual Disk(s)\n" +
                 $"Architecture: {_selectedVCenterVm.RecommendedHyperVGeneration}\n\n" +
-                "Note: If the VMware VM is powered on, it will be cleanly powered off before disk extraction.",
+                "Note: If the VMware VM is currently powered on, it will be powered off cleanly before disk extraction.",
                 "Confirm V2V Migration",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question);
@@ -2062,7 +2106,7 @@ finally {{
             BtnExecuteV2V.IsEnabled = false;
             PbV2VProgress.Value = 0;
             TxtV2VPercentText.Text = "0%";
-            TxtV2VStepText.Text = "Initializing conversion...";
+            TxtV2VStepText.Text = "Initializing conversion pipeline...";
 
             var job = new V2VMigrationJob
             {
@@ -2100,11 +2144,13 @@ finally {{
                 TxtV2VStepText.Text = "Migration completed successfully!";
 
                 MessageBox.Show(
-                    $"V2V Migration of '{_selectedVCenterVm.Name}' completed successfully!\n\nThe workload is now provisioned and ready on Hyper-V host '{targetHost}'.",
+                    $"V2V Migration of '{_selectedVCenterVm.Name}' completed successfully!\n\nThe workload is now provisioned with its full multi-disk storage array and live on Hyper-V host '{targetHost}'.",
                     "V2V Conversion Succeeded",
                     MessageBoxButton.OK,
                     MessageBoxImage.Information);
 
+                // Re-discover target workloads to update the live explorer
+                BtnConnectV2VTarget_Click(this, new RoutedEventArgs());
                 await RefreshInventoryAsync();
             }
             catch (Exception ex)
@@ -2118,5 +2164,4 @@ finally {{
             }
         }
     }
-
 }
