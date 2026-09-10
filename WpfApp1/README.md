@@ -1,4 +1,4 @@
-﻿# ⚡ WinMigrate Pro (ElectroMU Edition)
+﻿⚡ WinMigrate Pro (ElectroMU Edition)
 
 <p align="center">
   <strong>Native, Centralized, Agentless Hyper-V Live Migration Cockpit & VMware V2V Conversion Engine</strong>
@@ -12,9 +12,9 @@
   <img src="https://img.shields.io/badge/License-GPLv3-00F5D4?style=for-the-badge" alt="License: GPLv3" />
 </p>
 
----
 
-## 📌 Table of Contents
+
+ 📌 Table of Contents
 - [Executive Overview](#-executive-overview)
 - [Why WinMigrate Pro? (Competitive Matrix)](#-why-winmigrate-pro-competitive-matrix)
 - [Master System Architecture](#-master-system-architecture)
@@ -31,17 +31,17 @@
 - [Security & Credential Architecture](#-security--credential-architecture)
 - [Author & License](#-author--license)
 
----
 
-## 🚀 Executive Overview
 
-**WinMigrate Pro (ElectroMU Edition)** is a native Windows desktop orchestration cockpit engineered as a high-performance, agentless alternative to System Center Virtual Machine Manager (SCVMM) and Windows Admin Center (WAC).
+🚀 Executive Overview
+
+WinMigrate Pro (ElectroMU Edition)** is a native Windows desktop orchestration cockpit engineered as a high-performance, agentless alternative to System Center Virtual Machine Manager (SCVMM) and Windows Admin Center (WAC).
 
 Designed for enterprise datacenters, high-density gaming clusters, and MSP environments, WinMigrate Pro unifies **Hyper-V Live Migration orchestration** and **VMware vSphere cold V2V disk conversion** into a single glassmorphism cockpit. It features OLE drag-and-drop live moves, multi-disk storage tiering (NVMe SSD vs. HDD), automated firmware parity resolution (BIOS/EFI ➔ Gen1/Gen2), pre-flight namespace collision guards, and 1-click self-healing for notorious Kerberos double-hop (`0x8009030D`) and CPU instruction (`0x80072740`) errors.
 
----
 
-## ⚖ Why WinMigrate Pro? (Competitive Matrix)
+
+⚖ Why WinMigrate Pro? (Competitive Matrix)
 
 | Feature / Capability | WinMigrate Pro | SCVMM | Windows Admin Center (WAC) | StarWind V2V |
 | :--- | :---: | :---: | :---: | :---: |
@@ -56,11 +56,9 @@ Designed for enterprise datacenters, high-density gaming clusters, and MSP envir
 | **Pre-Flight Name Collision Engine** | ✅ Phase 0 Live Gatekeeper | ⚠️ Post-Validation | ❌ Fails Mid-Transfer | ❌ Overwrite Risk |
 | **HTML Compliance Audit Exporter** | ✅ Print-to-PDF Ready | ⚠️ Requires SSRS | ❌ Basic Logs | ❌ Log File Only |
 
----
 
-## 🏛 Master System Architecture
+ 🏛 Master System Architecture
 
-```text
  ┌─────────────────────────────────────────────────────────────────────────────────────────┐
  │                               WINMIGRATE PRO COCKPIT                                    │
  │                    .NET 10 / C# 13 Native Desktop Orchestrator                          │
@@ -78,6 +76,7 @@ Designed for enterprise datacenters, high-density gaming clusters, and MSP envir
  └───────────────────────────┘ └───────────────────────────┘ └───────────────────────────┘
 
  🧩 Deep-Dive Feature Breakdown
+
 1. Migration Orchestrator (Live Workload Cockpit)
 Agentless WinRM Discovery: Discovers standalone and clustered Hyper-V nodes over WSMan with no agent footprint on compute hosts.
 Visual OLE Drag-and-Drop: Drag running workloads directly from the Source list and drop them onto the Target Node card to stage a Live Migration.
@@ -93,11 +92,13 @@ Live Hardware Tuner: Adjust vCPU allocation, static/dynamic memory boundaries (M
 Multi-vNIC Remapping Matrix: Remap multiple guest network adapters when migrating between hosts with disparate virtual switch topologies or VLAN IDs.
 Disaggregated Multi-VHDX Storage Matrix: Route operating system virtual disks to high-speed NVMe CSVs and secondary data disks to high-capacity storage pools.
 Maintenance Window Scheduler: Queue unattended batch evacuations using SemaphoreSlim concurrency throttling (1–8 parallel migrations) with automated post-migration guest heartbeat verification and automatic rollback.
+
 2. Global Virtual Machine Inventory & Fleet Control
 Multi-Host Aggregator: Centralized inventory querying all managed Hyper-V compute nodes simultaneously.
 Bulk Fleet Control: Multi-select workloads across disparate hosts to execute unified ▶ Start, ⏹ Stop, 🔄 Restart, and 📸 Snap operations.
 AVHDX Checkpoint & Delta Chain Manager: Inspect active snapshot trees, compute cumulative .avhdx delta disk storage consumption, and merge stale delta chains with 1 click.
 Instant Type-Ahead Search: Real-time client-side filtering across workload names, hostnames, and IP subnets.
+
 3. vCenter to Hyper-V V2V Importer & Multi-Disk Tiering
 Direct vSphere REST Client: Direct API authentication against VMware vCenter / ESXi 7.0 & 8.0 with self-signed SSL verification bypass.
 Automated Firmware Parity Engine:
@@ -109,17 +110,19 @@ Route OS/Boot VMDK ➔ Fast NVMe SSD Pool (C:\ClusterStorage\Volume1_NVMe).
 Route Data/Secondary VMDKs ➔ High-Capacity HDD Storage (D:\HyperV_HDD_Storage).
 Chunked Conversion Pipeline: Standalone embedded qemu-img.exe conversion pipeline with live background byte/speed monitoring.
 Live Target Node Explorer: Visualizes existing Hyper-V workloads on the destination host, complete with reactive neon collision badges (#EF4444) if an existing VM matches the selected VMware guest name.
+
 4. Active Jobs, Telemetry & Compliance Audit
 Real-Time Job Telemetry: Tracks active tasks with dynamic status indicators (RUNNING, COMPLETED, FAILED, ROLLED_BACK), duration stopwatches, and step metrics.
 Streaming Cyber Terminal: Captures and formats PowerShell Information, Warning, Verbose, and Error records in a cyber-styled terminal window.
 Standalone HTML Compliance Audit Exporter: Generates standalone, self-contained HTML audit reports complete with KPI cards, transcript logs, and clean print-to-PDF formatting.
+
 5. Platform Settings & QoS Subnet Isolation
 Atomic JSON Configuration: Configuration persists to %AppData%\WinMigratePro\config.json using atomic write/replace operations to prevent zero-byte corruption during sudden power events.
 Transport QoS & Performance Options: Configure Live Migration transport modes (Compression, SMB Multichannel, TCP) and assign strict bandwidth ceilings (Mbps).
 Dedicated Live Migration Subnet Selector: Automatically inspects host network adapters to isolate migration traffic to high-speed 10GbE/25GbE interfaces, preserving client bandwidth on gaming and production networks.
 🩺 1-Click Infrastructure Doctor & Self-Healing
 WinMigrate Pro features built-in diagnostics for resolving common Hyper-V Live Migration errors:
-code
+
 Text
 [ISSUE] Kerberos Authentication Failure (0x8009030D)
  ├── Root Cause: Stale Kerberos SYSTEM tickets (0x3e7) or missing Active Directory Constrained Delegation.
@@ -135,7 +138,7 @@ Text
       • Toggles 'CompatibilityForMigrationMode' to mask mismatched instruction sets.
 💻 Command-Line Interface (CLI) & Automation
 WinMigrate Pro supports direct CLI parameter ingestion for Windows Admin Center (WAC) deep-linking and automated scheduler integrations:
-code
+
 Powershell
 WinMigratePro.exe [options]
 CLI Options Reference
@@ -150,6 +153,7 @@ Flag	Long Argument	Description	Example
 --performance	Transport QoS Mode (Compression / SMB / TCP)	--performance SMB
 -a	--autoconnect	Automatically trigger discovery on launch	-a
 -h	--help	Display CLI syntax manual	-h
+
 📦 Deployment & Prerequisites
 System Requirements
 Management Workstation: Windows 10 / 11 (x64) or Windows Server 2022 / 2025.
@@ -161,7 +165,8 @@ TCP 5985 / 5986 (WinRM HTTP/HTTPS)
 TCP 445 (SMB Management / Administrative Shares)
 TCP 443 (vSphere REST API / Datastore HTTPS Streaming)
 🔨 Building from Source
-code
+
+
 Powershell
 # 1. Clone the repository
 git clone https://github.com/YourUsername/WinMigratePro.git
@@ -177,6 +182,7 @@ dotnet build -c Release -r win-x64
 dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
 info
 Ensure companion binaries (qemu-img.exe and associated MinGW runtime DLLs) reside inside the Tools\ subfolder alongside WinMigratePro.exe.
+
 🔒 Security & Credential Architecture
 Zero-Agent Footprint: Installs no permanent services, drivers, or background listeners on production virtualization hosts.
 Memory-Only Credential Safety: Host passwords and tokens are held in volatile memory using SecureString and never written unencrypted to disk.

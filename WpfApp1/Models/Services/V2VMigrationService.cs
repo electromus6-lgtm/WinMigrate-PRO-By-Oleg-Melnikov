@@ -17,7 +17,8 @@ namespace WpfApp1.Services
     /// <summary>
     /// Master orchestration service for VMware-to-Hyper-V (V2V) cold migrations.
     /// Automates PowerCLI Export-VApp (snapshot merging), Tools\qemu-img.exe disk conversion,
-    /// network UNC streaming, multi-disk storage tiering, and remote Hyper-V VM provisioning over WinRM.
+    /// network UNC streaming, multi-disk storage tiering, anti-lock session isolation,
+    /// automatic 0xC03A001A disk decompression, and remote Hyper-V VM provisioning over WinRM.
     /// </summary>
     public sealed class V2VMigrationService
     {
@@ -54,11 +55,12 @@ namespace WpfApp1.Services
         /// Fully automated end-to-end V2V migration pipeline:
         /// 0. Audit destination Hyper-V node for name collisions before staging
         /// 1. Power off VMware VM via vCenter API (if powered on)
-        /// 2. Export and merge all active snapshots via PowerCLI Export-VApp
+        /// 2. Export and merge all active snapshots via PowerCLI Export-VApp into an isolated timestamped session folder
         /// 3. Convert merged VMDK(s) to dynamic VHDX using Tools\qemu-img.exe with storage tiering (NVMe/HDD)
-        /// 4. Reclaim local staging buffer
-        /// 5. Provision matching Generation 1 (BIOS) or Generation 2 (UEFI) VM on Hyper-V with multi-disk array
-        /// 6. Power on workload on Hyper-V
+        /// 4. Auto-sanitize VHDX files (strip NTFS compression, sparse flags, and ReFS integrity streams to fix 0xC03A001A)
+        /// 5. Reclaim local staging buffer
+        /// 6. Provision matching Generation 1 (BIOS) or Generation 2 (UEFI) VM on Hyper-V with multi-disk array
+        /// 7. Power on workload on Hyper-V
         /// </summary>
         public static async Task ExecuteV2VMigrationAsync(
             V2VMigrationJob job,
@@ -75,13 +77,15 @@ namespace WpfApp1.Services
             job.Status = V2VMigrationStatus.ExportingVmdk;
             job.StartTime = DateTime.Now;
 
-            var stagingBase = Path.Combine(Path.GetTempPath(), "WinMigrate_V2V_Staging");
-            var stagingVmFolder = Path.Combine(stagingBase, sourceVm.Name);
+            // Unique Session Isolation Folder: Completely prevents file-lock collisions from previous runs
+            var cleanVmName = SanitizeFileName(sourceVm.Name);
+            var stagingVmFolder = Path.Combine(Path.GetTempPath(), "WinMigrate_V2V_Staging", $"{cleanVmName}_{DateTime.Now:yyyyMMdd_HHmmss}");
+            Directory.CreateDirectory(stagingVmFolder);
 
             try
             {
                 logger.Report($"[V2V] Commencing Automated V2V Migration for '{sourceVm.Name}' (vCenter ➔ Hyper-V '{targetHyperVHost}')...");
-                job.AppendLog($"Initiated automated V2V pipeline for {sourceVm.Name}.");
+                job.AppendLog($"Initiated automated V2V pipeline for {sourceVm.Name} (Staging: {stagingVmFolder}).");
 
                 // ---------------------------------------------------------
                 // PHASE 0: PRE-FLIGHT NAME COLLISION CHECK
@@ -126,21 +130,12 @@ namespace WpfApp1.Services
                 logger.Report($"[EXPORT] Exporting VMDK and merging snapshot chain via PowerCLI Export-VApp...");
                 job.AppendLog("Executing PowerCLI Export-VApp to merge snapshots on the fly.");
 
-                if (Directory.Exists(stagingVmFolder))
-                {
-                    try { Directory.Delete(stagingVmFolder, true); } catch { }
-                }
-                if (!Directory.Exists(stagingBase))
-                {
-                    Directory.CreateDirectory(stagingBase);
-                }
-
                 await ExportVmViaPowerCliAsync(
                     vCenterService.ConnectedHost,
                     vCenterService.AuthUsername,
                     vCenterService.AuthPassword,
                     sourceVm.Name,
-                    stagingBase,
+                    stagingVmFolder,
                     job,
                     logger,
                     cancellationToken);
@@ -281,7 +276,7 @@ namespace WpfApp1.Services
                 // ---------------------------------------------------------
                 try
                 {
-                    logger.Report($"[CLEANUP] Deleting temporary staging VMDK files to reclaim disk space...");
+                    logger.Report($"[CLEANUP] Reclaiming local staging buffer space...");
                     if (Directory.Exists(stagingVmFolder))
                     {
                         Directory.Delete(stagingVmFolder, true);
@@ -413,7 +408,7 @@ namespace WpfApp1.Services
         }
 
         /// <summary>
-        /// Executes PowerCLI Export-VApp with a live background file-watcher monitoring downloaded megabytes and MB/s throughput.
+        /// Executes PowerCLI Export-VApp with a live non-locking background file-watcher monitoring downloaded megabytes and MB/s throughput.
         /// </summary>
         private static async Task ExportVmViaPowerCliAsync(
             string vCenterHost,
@@ -480,31 +475,53 @@ namespace WpfApp1.Services
                 proc.BeginOutputReadLine();
                 proc.BeginErrorReadLine();
 
-                var vmStagingDir = Path.Combine(destinationFolder, vmName);
                 var sw = Stopwatch.StartNew();
                 var lastSize = 0L;
 
-                while (!proc.HasExited)
+                try
                 {
-                    await Task.Delay(1000, ct);
-
-                    try
+                    while (!proc.HasExited)
                     {
-                        if (Directory.Exists(vmStagingDir))
+                        await Task.Delay(1000, ct);
+
+                        try
                         {
-                            var files = Directory.GetFiles(vmStagingDir, "*.*", SearchOption.AllDirectories);
-                            var totalBytes = files.Sum(f => new FileInfo(f).Length);
-                            var totalMb = totalBytes / (1024.0 * 1024.0);
+                            if (Directory.Exists(destinationFolder))
+                            {
+                                var files = Directory.GetFiles(destinationFolder, "*.*", SearchOption.AllDirectories);
+                                var totalBytes = 0L;
 
-                            var deltaBytes = totalBytes - lastSize;
-                            lastSize = totalBytes;
-                            var speedMbps = (deltaBytes / (1024.0 * 1024.0));
+                                foreach (var f in files)
+                                {
+                                    try
+                                    {
+                                        using var fs = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                                        totalBytes += fs.Length;
+                                    }
+                                    catch { }
+                                }
 
-                            job.ProgressPercent = Math.Clamp(5.0 + (totalMb / 150.0), 5.0, 45.0);
-                            logger.Report($"[DOWNLOADING] Staged: {totalMb:F1} MB @ {speedMbps:F1} MB/s");
+                                var totalMb = totalBytes / (1024.0 * 1024.0);
+                                var deltaBytes = totalBytes - lastSize;
+                                lastSize = totalBytes;
+                                var speedMbps = (deltaBytes / (1024.0 * 1024.0));
+
+                                job.ProgressPercent = Math.Clamp(5.0 + (totalMb / 150.0), 5.0, 45.0);
+                                if (totalMb > 0)
+                                {
+                                    logger.Report($"[DOWNLOADING] Staged: {totalMb:F1} MB @ {speedMbps:F1} MB/s");
+                                }
+                            }
                         }
+                        catch { }
                     }
-                    catch { }
+                }
+                finally
+                {
+                    if (!proc.HasExited)
+                    {
+                        try { proc.Kill(true); } catch { }
+                    }
                 }
 
                 sw.Stop();
@@ -520,7 +537,7 @@ namespace WpfApp1.Services
 
         /// <summary>
         /// Converts the staged VMDK to dynamic VHDX using Tools\qemu-img.exe with segmented progress scaling.
-        /// Strips compression and sparse attributes to prevent Hyper-V 0xC03A001A boot failure.
+        /// Automatically uncompresses and strips sparse flags to prevent Hyper-V 0xC03A001A boot failure.
         /// </summary>
         private static async Task ConvertWithQemuImgAsync(
             string qemuPath,
@@ -744,6 +761,13 @@ namespace WpfApp1.Services
                 ps.AddScript($"Import-Module Hyper-V -ErrorAction SilentlyContinue; Start-VM -Name '{safeVmName}' -ErrorAction SilentlyContinue");
                 ps.Invoke();
             }, ct);
+        }
+
+        private static string SanitizeFileName(string name)
+        {
+            var invalidChars = Path.GetInvalidFileNameChars();
+            var clean = new string(name.Where(c => !invalidChars.Contains(c)).ToArray()).Trim();
+            return string.IsNullOrWhiteSpace(clean) ? "Workload" : clean;
         }
 
         private static string SanitizeHost(string host)
