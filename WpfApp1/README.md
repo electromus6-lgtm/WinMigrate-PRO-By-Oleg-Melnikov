@@ -181,8 +181,11 @@ Ensure companion binaries (qemu-img.exe and associated MinGW runtime DLLs) resid
 Zero-Agent Footprint: Installs no permanent services, drivers, or background listeners on production virtualization hosts.
 Memory-Only Credential Safety: Host passwords and tokens are held in volatile memory using SecureString and never written unencrypted to disk.
 Native Windows Authentication: Leverages native Negotiate/Kerberos and CredSSP authentication protocols via standard Windows WSMan channels.
-👤 Author & License
-* **Lead Systems Architect**: Oleg Melnikov
+
+👤 Author & Enterprise Consulting
+
+* **Lead Systems Architect**: **Oleg Melnikov**
+* **LinkedIn**: [![LinkedIn Profile](https://img.shields.io/badge/LinkedIn-Oleg%20Melnikov-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/oleg-melnikov-4b694a164/)
 * **Organization**: [ElectroMU Gaming Network](https://electromu.net)
 * **License**: Distributed under the [GNU General Public License v3.0 (GPLv3)](LICENSE).
 
