@@ -188,12 +188,25 @@ Zero-Agent Footprint: Installs no permanent services, drivers, or background lis
 Memory-Only Credential Safety: Host passwords and tokens are held in volatile memory using SecureString and never written unencrypted to disk.
 Native Windows Authentication: Leverages native Negotiate/Kerberos and CredSSP authentication protocols via standard Windows WSMan channels.
 
+🚀 Highlights
+
+**100% Agentless Hyper-V Live Migration**: OLE drag-and-drop, multi-vNIC matrix, and disaggregated storage distribution.
+**Direct VMware vCenter to Hyper-V V2V Importer**: Automated firmware parity (BIOS ➔ Gen1 IDE / EFI ➔ Gen2 SCSI) and multi-disk NVMe SSD vs. HDD tiering.
+
+**1-Click Self-Healing**: Automated Kerberos `0x8009030D` SYSTEM ticket purge (`0x3e7`) and CPU `0x80072740` instruction compatibility mask.
+
+**Automated Disk Sanitizer**: Strips NTFS compression and sparse attributes (`0xC03A001A` cure) so converted disks boot immediately.
+**Maintenance Batch Scheduler**: Semaphore-throttled unattended datacenter evacuations with auto-rollback on guest heartbeat failure.
+
+📦 Installation
+Download and extract `WinMigratePro_v1.0.0_Portable.zip`, right-click `WinMigratePro.exe`, and select **Run as Administrator**.
+
 👤 Author & Enterprise Consulting
 
-* **Lead Systems Architect**: **Oleg Melnikov**
-* **LinkedIn**: [![LinkedIn Profile](https://img.shields.io/badge/LinkedIn-Oleg%20Melnikov-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/oleg-melnikov-4b694a164/)
-* **Organization**: [ElectroMU Gaming Network](https://electromu.net)
-* **License**: Distributed under the [GNU General Public License v3.0 (GPLv3)](LICENSE).
+**Lead Systems Architect**: **Oleg Melnikov**
+**LinkedIn**: [![LinkedIn Profile](https://img.shields.io/badge/LinkedIn-Oleg%20Melnikov-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/oleg-melnikov-4b694a164/)
+**Organization**: [ElectroMU Gaming Network](https://electromu.net)
+**License**: Distributed under the [GNU General Public License v3.0 (GPLv3)](LICENSE).
 
 
 Copyright (C) 2026 Oleg Melnikov (ElectroMU Gaming Network)
