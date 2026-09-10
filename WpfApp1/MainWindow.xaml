@@ -915,7 +915,7 @@
                                         <Run Text="Lead Architect: "/><Run Text="Oleg Melnikov" Foreground="{StaticResource BrushCyanAccentHover}" FontWeight="Bold"/>
                                         <Run Text=" &#x2022; "/><Run Text="ElectroMU Gaming Network" Foreground="{StaticResource BrushSuccess}" FontWeight="Bold"/>
                                     </TextBlock>
-                                    <TextBlock Text="Centralized, agentless Hyper-V live migration console. Distributed as open-source under the MIT License." Foreground="{StaticResource BrushTextMuted}" FontSize="11" Margin="0,4,0,0"/>
+                                    <TextBlock Text="Centralized, agentless Hyper-V live migration console. Distributed as open-source under the GNU GPLv3 License." Foreground="{StaticResource BrushTextMuted}" FontSize="11" Margin="0,4,0,0"/>
                                 </StackPanel>
                             </Grid>
                         </Border>

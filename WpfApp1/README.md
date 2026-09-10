@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/C%23-13-239120?style=for-the-badge&logo=csharp&logoColor=white" alt="C# 13" />
   <img src="https://img.shields.io/badge/Platform-Windows%20Server%202022%20%2F%202025%20%7C%20Win%2011-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows Server" />
   <img src="https://img.shields.io/badge/Architecture-100%25%20Agentless%20WSMan-00B4D8?style=for-the-badge" alt="Agentless" />
-  <img src="https://img.shields.io/badge/License-MIT-00F5D4?style=for-the-badge" alt="License" />
+  <img src="https://img.shields.io/badge/License-GPLv3-00F5D4?style=for-the-badge" alt="License: GPLv3" />
 </p>
 
 ---
@@ -182,15 +182,19 @@ Zero-Agent Footprint: Installs no permanent services, drivers, or background lis
 Memory-Only Credential Safety: Host passwords and tokens are held in volatile memory using SecureString and never written unencrypted to disk.
 Native Windows Authentication: Leverages native Negotiate/Kerberos and CredSSP authentication protocols via standard Windows WSMan channels.
 👤 Author & License
-Lead Systems Architect: Oleg Melnikov
-Organization: ElectroMU Gaming Network
-License: Distributed under the MIT License.
-code
-Text
-Copyright (c) 2026 Oleg Melnikov (ElectroMU Gaming Network)
+* **Lead Systems Architect**: Oleg Melnikov
+* **Organization**: [ElectroMU Gaming Network](https://electromu.net)
+* **License**: Distributed under the [GNU General Public License v3.0 (GPLv3)](LICENSE).
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software...
+
+Copyright (C) 2026 Oleg Melnikov (ElectroMU Gaming Network)
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
