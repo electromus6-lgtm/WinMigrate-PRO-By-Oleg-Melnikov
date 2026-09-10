@@ -1949,10 +1949,13 @@ namespace WpfApp1
         {
             try
             {
-                if (VCenterVmListBox.SelectedItem is VCenterVmModel vm)
+                if (VCenterVmListBox?.SelectedItem is VCenterVmModel vm)
                 {
                     _selectedVCenterVm = vm;
-                    TxtV2VSelectedVmInfo.Text = $"Workload: {vm.Name} | vCPUs: {vm.CpuCount} | RAM: {vm.FormattedRam} | Interrogating storage backplane...";
+                    if (TxtV2VSelectedVmInfo != null)
+                    {
+                        TxtV2VSelectedVmInfo.Text = $"Workload: {vm.Name} | vCPUs: {vm.CpuCount} | RAM: {vm.FormattedRam} | Inspecting disks...";
+                    }
 
                     // Deep-inspect disks on-demand
                     if (vm.Disks.Count == 0)
@@ -1960,45 +1963,57 @@ namespace WpfApp1
                         await _vCenterService.InspectSingleVmDetailsAsync(vm);
                     }
 
-                    // Populate default storage routing per disk
-                    var defaultPath = !string.IsNullOrWhiteSpace(_targetV2VDefaultStorage)
-                        ? _targetV2VDefaultStorage
-                        : @"C:\ClusterStorage\Volume1";
-
-                    for (int i = 0; i < vm.Disks.Count; i++)
+                    var diskCount = vm.Disks?.Count ?? 0;
+                    if (TxtV2VSelectedVmInfo != null)
                     {
-                        var disk = vm.Disks[i];
-                        disk.IsBootDisk = (i == 0);
-                        if (string.IsNullOrWhiteSpace(disk.TargetStoragePath))
-                        {
-                            disk.TargetStoragePath = defaultPath;
-                        }
-                        if (string.IsNullOrWhiteSpace(disk.TargetFileName))
-                        {
-                            disk.TargetFileName = $"{vm.Name}_Disk{i}.vhdx";
-                        }
+                        TxtV2VSelectedVmInfo.Text = $"Workload: {vm.Name} | vCPUs: {vm.CpuCount} | RAM: {vm.FormattedRam} | Disks: {diskCount} ({vm.FormattedTotalStorage})";
                     }
 
-                    var diskCount = vm.Disks?.Count ?? 0;
-                    TxtV2VSelectedVmInfo.Text = $"Workload: {vm.Name} | vCPUs: {vm.CpuCount} | RAM: {vm.FormattedRam} | Disks: {diskCount} ({vm.FormattedTotalStorage})";
-
                     var gen = vm.RecommendedHyperVGeneration;
-                    TxtV2VFirmwareParity.Text = $"Target Generation: {gen} (Automatic Parity for VMware {vm.Firmware})";
+                    if (TxtV2VFirmwareParity != null)
+                    {
+                        TxtV2VFirmwareParity.Text = $"Target Generation: {gen} (Automatic Parity for VMware {vm.Firmware})";
+                    }
 
-                    // Update live collision warning across target workloads
-                    AuditTargetWorkloadCollisions();
+                    // Populate default storage paths per disk if not already set
+                    var defaultPath = !string.IsNullOrWhiteSpace(_targetV2VDefaultStorage) ? _targetV2VDefaultStorage : "C:\\ClusterStorage\\Volume1";
+                    if (vm.Disks != null)
+                    {
+                        for (int i = 0; i < vm.Disks.Count; i++)
+                        {
+                            if (string.IsNullOrWhiteSpace(vm.Disks[i].TargetStoragePath))
+                            {
+                                vm.Disks[i].TargetStoragePath = defaultPath;
+                            }
+                            if (string.IsNullOrWhiteSpace(vm.Disks[i].TargetFileName))
+                            {
+                                vm.Disks[i].TargetFileName = $"{vm.Name}_Disk{i}.vhdx";
+                            }
+                            vm.Disks[i].IsBootDisk = (i == 0);
+                        }
+                    }
                 }
                 else
                 {
                     _selectedVCenterVm = null;
-                    TxtV2VSelectedVmInfo.Text = "Select a VMware VM on the left to review conversion specs.";
-                    TxtV2VFirmwareParity.Text = "Target Generation: Auto-detected from firmware";
-                    AuditTargetWorkloadCollisions();
+                    if (TxtV2VSelectedVmInfo != null)
+                    {
+                        TxtV2VSelectedVmInfo.Text = "Select a VMware VM on the left to review conversion specs.";
+                    }
+                    if (TxtV2VFirmwareParity != null)
+                    {
+                        TxtV2VFirmwareParity.Text = "Target Generation: Auto-detected from firmware";
+                    }
                 }
+
+                AuditTargetWorkloadCollisions();
             }
             catch (Exception ex)
             {
-                TxtV2VSelectedVmInfo.Text = $"Notice: {ex.Message}";
+                if (TxtV2VSelectedVmInfo != null)
+                {
+                    TxtV2VSelectedVmInfo.Text = $"Notice: {ex.Message}";
+                }
             }
         }
 
