@@ -108,8 +108,8 @@ namespace WpfApp1.Models
                 double gb = CapacityBytes / (1024.0 * 1024.0 * 1024.0);
                 return gb >= 1024 ? $"{gb / 1024.0:F2} TB" : $"{gb:F1} GB";
             }
+            set { }
         }
-
         public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
@@ -273,16 +273,29 @@ namespace WpfApp1.Models
             set { _isSelected = value; OnPropertyChanged(); }
         }
 
-        public VmGeneration RecommendedHyperVGeneration =>
-            Firmware == VCenterFirmwareType.Efi ? VmGeneration.Generation2 : VmGeneration.Generation1;
+        public VmGeneration RecommendedHyperVGeneration
+        {
+            get => Firmware == VCenterFirmwareType.Efi ? VmGeneration.Generation2 : VmGeneration.Generation1;
+            set { }
+        }
 
-        public int DiskCount => _disks?.Count ?? 0;
+        public int DiskCount
+        {
+            get => _disks?.Count ?? 0;
+            set { }
+        }
 
-        public string FormattedRam => MemoryMB >= 1024
-            ? $"{MemoryMB / 1024.0:F1} GB"
-            : $"{MemoryMB} MB";
+        public string FormattedRam
+        {
+            get => MemoryMB >= 1024 ? $"{MemoryMB / 1024.0:F1} GB" : $"{MemoryMB} MB";
+            set { }
+        }
 
-        public long TotalDiskBytes => _disks != null ? _disks.ToArray().Sum(d => d.CapacityBytes) : 0L;
+        public long TotalDiskBytes
+        {
+            get => _disks != null ? _disks.ToArray().Sum(d => d.CapacityBytes) : 0L;
+            set { }
+        }
 
         public string FormattedTotalStorage
         {
@@ -291,14 +304,19 @@ namespace WpfApp1.Models
                 double gb = TotalDiskBytes / (1024.0 * 1024.0 * 1024.0);
                 return gb >= 1024 ? $"{gb / 1024.0:F2} TB" : $"{gb:F1} GB";
             }
+            set { }
         }
 
-        public SolidColorBrush PowerBadgeColor => PowerState switch
+        public SolidColorBrush PowerBadgeColor
         {
-            VCenterPowerState.PoweredOn => GreenPowerBrush,
-            VCenterPowerState.Suspended => AmberPowerBrush,
-            _ => RedPowerBrush
-        };
+            get => PowerState switch
+            {
+                VCenterPowerState.PoweredOn => GreenPowerBrush,
+                VCenterPowerState.Suspended => AmberPowerBrush,
+                _ => RedPowerBrush
+            };
+            set { }
+        }
 
         public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>

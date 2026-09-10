@@ -197,22 +197,50 @@ public class VirtualMachineModel : INotifyPropertyChanged
     // Dynamic UI & Presentation Helpers
     // ---------------------------------------------------------
 
-    public bool IsRunning => Status == VmOperationalStatus.Running;
-
-    public string FormattedRam => AssignedRamMB >= 1024
-        ? $"{(AssignedRamMB / 1024.0):F1} GB"
-        : $"{AssignedRamMB} MB";
-
-    public string StatusBadgeColor => Status switch
+    public bool IsRunning
     {
-        VmOperationalStatus.Running => "#10B981",    // Emerald Green
-        VmOperationalStatus.Off => "#64748B",        // Slate Gray
-        VmOperationalStatus.Paused => "#F59E0B",     // Amber Warning
-        VmOperationalStatus.Saved => "#3B82F6",      // Cobalt Blue
-        _ => "#EF4444"                               // Red (Unknown / Error)
-    };
+        get => Status == VmOperationalStatus.Running;
+        set { }
+    }
 
-    public long TotalStorageBytes => HardDisks.Sum(d => d.SizeBytes);
+    public string FormattedRam
+    {
+        get => AssignedRamMB >= 1024
+            ? $"{(AssignedRamMB / 1024.0):F1} GB"
+            : $"{AssignedRamMB} MB";
+        set { }
+    }
+
+    public string StatusBadgeColor
+    {
+        get => Status switch
+        {
+            VmOperationalStatus.Running => "#10B981",    // Emerald Green
+            VmOperationalStatus.Off => "#64748B",        // Slate Gray
+            VmOperationalStatus.Paused => "#F59E0B",     // Amber Warning
+            VmOperationalStatus.Saved => "#3B82F6",      // Cobalt Blue
+            _ => "#EF4444"                               // Red (Unknown / Error)
+        };
+        set { }
+    }
+
+    public string PowerState
+    {
+        get => Status.ToString();
+        set { }
+    }
+
+    public string PowerBadgeColor
+    {
+        get => StatusBadgeColor;
+        set { }
+    }
+
+    public long TotalStorageBytes
+    {
+        get => HardDisks.Sum(d => d.SizeBytes);
+        set { }
+    }
 
     public string FormattedTotalStorage
     {
@@ -221,6 +249,7 @@ public class VirtualMachineModel : INotifyPropertyChanged
             double gb = TotalStorageBytes / (1024.0 * 1024.0 * 1024.0);
             return gb >= 1024 ? $"{(gb / 1024.0):F2} TB" : $"{gb:F1} GB";
         }
+        set { }
     }
 
     // ---------------------------------------------------------

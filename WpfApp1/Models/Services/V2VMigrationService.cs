@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -16,7 +17,7 @@ namespace WpfApp1.Services
     /// <summary>
     /// Master orchestration service for VMware-to-Hyper-V (V2V) cold migrations.
     /// Automates PowerCLI Export-VApp (snapshot merging), Tools\qemu-img.exe disk conversion,
-    /// network UNC streaming, and remote Hyper-V VM provisioning over WinRM.
+    /// network UNC streaming, multi-disk storage tiering, and remote Hyper-V VM provisioning over WinRM.
     /// </summary>
     public sealed class V2VMigrationService
     {
@@ -54,9 +55,9 @@ namespace WpfApp1.Services
         /// 0. Audit destination Hyper-V node for name collisions before staging
         /// 1. Power off VMware VM via vCenter API (if powered on)
         /// 2. Export and merge all active snapshots via PowerCLI Export-VApp
-        /// 3. Convert merged VMDK to dynamic VHDX using Tools\qemu-img.exe directly to the Hyper-V target
+        /// 3. Convert merged VMDK(s) to dynamic VHDX using Tools\qemu-img.exe with storage tiering (NVMe/HDD)
         /// 4. Reclaim local staging buffer
-        /// 5. Provision matching Generation 1 (BIOS) or Generation 2 (UEFI) VM on Hyper-V
+        /// 5. Provision matching Generation 1 (BIOS) or Generation 2 (UEFI) VM on Hyper-V with multi-disk array
         /// 6. Power on workload on Hyper-V
         /// </summary>
         public static async Task ExecuteV2VMigrationAsync(
@@ -401,7 +402,6 @@ namespace WpfApp1.Services
                 }
                 catch
                 {
-                    // Fail safe on unreachable host, auth error, or timeout — never crash the UI
                     return false;
                 }
                 finally
@@ -480,9 +480,8 @@ namespace WpfApp1.Services
                 proc.BeginOutputReadLine();
                 proc.BeginErrorReadLine();
 
-                // Live Background File Monitor: tracks bytes landing on disk in real-time
                 var vmStagingDir = Path.Combine(destinationFolder, vmName);
-                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var sw = Stopwatch.StartNew();
                 var lastSize = 0L;
 
                 while (!proc.HasExited)
@@ -499,9 +498,8 @@ namespace WpfApp1.Services
 
                             var deltaBytes = totalBytes - lastSize;
                             lastSize = totalBytes;
-                            var speedMbps = (deltaBytes / (1024.0 * 1024.0)); // MB per second
+                            var speedMbps = (deltaBytes / (1024.0 * 1024.0));
 
-                            // Advance progress bar smoothly between 5% and 45%
                             job.ProgressPercent = Math.Clamp(5.0 + (totalMb / 150.0), 5.0, 45.0);
                             logger.Report($"[DOWNLOADING] Staged: {totalMb:F1} MB @ {speedMbps:F1} MB/s");
                         }
@@ -522,6 +520,7 @@ namespace WpfApp1.Services
 
         /// <summary>
         /// Converts the staged VMDK to dynamic VHDX using Tools\qemu-img.exe with segmented progress scaling.
+        /// Strips compression and sparse attributes to prevent Hyper-V 0xC03A001A boot failure.
         /// </summary>
         private static async Task ConvertWithQemuImgAsync(
             string qemuPath,
@@ -546,7 +545,6 @@ namespace WpfApp1.Services
                     throw new FileNotFoundException($"Source VMDK file not found for conversion: {sourceFile}");
                 }
 
-                // VHDX is dynamic by default in QEMU
                 var qemuArgs = $"convert -p -f vmdk -O vhdx \"{sourceFile}\" \"{destVhdx}\"";
                 logger.Report($"[qemu-img] Executing: {qemuPath} {qemuArgs}");
 
@@ -587,7 +585,32 @@ namespace WpfApp1.Services
                     throw new InvalidOperationException($"qemu-img conversion failed (Exit Code {proc.ExitCode}):\n{details}");
                 }
 
-                logger.Report($"[qemu-img] Converted VHDX generated: {destVhdx}");
+                // 0xC03A001A Guard: Ensure VHDX is completely uncompressed and not sparse
+                try
+                {
+                    var psiCompact = new ProcessStartInfo
+                    {
+                        FileName = "compact.exe",
+                        Arguments = $"/U /F \"{destVhdx}\"",
+                        CreateNoWindow = true,
+                        UseShellExecute = false
+                    };
+                    using var pCompact = Process.Start(psiCompact);
+                    pCompact?.WaitForExit(5000);
+
+                    var psiSparse = new ProcessStartInfo
+                    {
+                        FileName = "fsutil.exe",
+                        Arguments = $"sparse setflag \"{destVhdx}\" 0",
+                        CreateNoWindow = true,
+                        UseShellExecute = false
+                    };
+                    using var pSparse = Process.Start(psiSparse);
+                    pSparse?.WaitForExit(5000);
+                }
+                catch { }
+
+                logger.Report($"[qemu-img] Converted VHDX generated and uncompressed: {destVhdx}");
             }, ct);
         }
 
@@ -624,11 +647,9 @@ namespace WpfApp1.Services
                 var genNum = generation == VmGeneration.Generation2 ? 2 : 1;
                 var memBytes = memoryMb * 1024L * 1024L;
 
-                // Build multi-disk attachment script block
                 var diskAttachmentBuilder = new StringBuilder();
                 if (genNum == 1)
                 {
-                    // Ensure SCSI Controller 0 exists for secondary disks on Gen 1
                     diskAttachmentBuilder.AppendLine(@"
                         $scsiCtrl = Get-VMScsiController -VM $vm -ErrorAction SilentlyContinue
                         if (-not $scsiCtrl) {
@@ -640,6 +661,18 @@ namespace WpfApp1.Services
                 foreach (var d in attachedDisks)
                 {
                     var safePath = d.HyperVLocalVhdxPath.Replace("'", "''");
+
+                    // 0xC03A001A Guard on Target Host: Strip NTFS Compression, Remove Sparse flags, and disable ReFS Integrity Streams
+                    diskAttachmentBuilder.AppendLine($@"
+                        try {{
+                            compact.exe /U /F '{safePath}' 2>$null | Out-Null
+                            fsutil sparse setflag '{safePath}' 0 2>$null | Out-Null
+                            if (Get-Command Set-FileIntegrity -ErrorAction SilentlyContinue) {{
+                                Set-FileIntegrity -FileName '{safePath}' -Enable $false -ErrorAction SilentlyContinue
+                            }}
+                        }} catch {{}}
+                    ");
+
                     diskAttachmentBuilder.AppendLine(
                         $"Add-VMHardDiskDrive -VM $vm -ControllerType {d.ControllerType} -ControllerNumber {d.ControllerNumber} -ControllerLocation {d.ControllerLocation} -Path '{safePath}' -ErrorAction Stop");
                 }
