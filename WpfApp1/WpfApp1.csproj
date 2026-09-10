@@ -35,7 +35,7 @@
 		<Product>WinMigrate Pro (ElectroMU Edition)</Product>
 		<Description>Centralized agentless live migration orchestrator and datacenter management console for Hyper-V.</Description>
 		<Copyright>Copyright © 2026 Oleg Melnikov. ElectroMU Gaming Network. All rights reserved.</Copyright>
-		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
 		<Version>1.1.0</Version>
 		<AssemblyVersion>1.1.0.0</AssemblyVersion>
 		<FileVersion>1.1.0.0</FileVersion>
@@ -45,17 +45,17 @@
 		<PackageReference Include="System.Management.Automation" Version="7.4.5" />
 	</ItemGroup>
 
-	<!-- Automatically deploy tools directory (qemu-img.exe) to build output -->
+	<!-- Automatically deploy Tools directory (qemu-img.exe + companion MinGW DLLs) on Build and Publish -->
 	<ItemGroup>
-		<None Update="tools\**" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="Tools\**\*">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<CopyToPublishDirectory>Always</CopyToPublishDirectory>
+		</Content>
 	</ItemGroup>
-	
+
 	<!-- Include icon as a content resource -->
 	<ItemGroup>
 		<Resource Include="database-management.ico" />
-	</ItemGroup>
-	<ItemGroup>
-	  <Folder Include="Tools\" />
 	</ItemGroup>
 
 </Project>
